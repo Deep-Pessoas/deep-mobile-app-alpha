@@ -56,9 +56,9 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
   const [draftPromptHandled, setDraftPromptHandled] = useState(!data.hasDraft);
   const [missingFields, setMissingFields] = useState<{ id: string; label: string }[]>([]);
   const scrollViewRef = useRef<ScrollView>(null);
-  const fieldOffsets = useRef(new Map<string, number>());
+  const scrollY = useRef(0);
   const keyboardScrollContext = useMemo(
-    () => ({ fieldOffsets, scrollViewRef }),
+    () => ({ scrollViewRef, scrollY }),
     [],
   );
   const draftScope = useMemo(
@@ -159,7 +159,9 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
           contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: insets.bottom + 120 }}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onScroll={(event) => { scrollY.current = event.nativeEvent.contentOffset.y; }}
           ref={scrollViewRef}
+          scrollEventThrottle={16}
         >
           <View className="mb-3 flex-row items-center gap-3 rounded-2xl bg-primary-500 px-3 py-3">
             <Pressable
@@ -186,7 +188,6 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
               errors={errors}
               field={field}
               isLastChild={index === data.form.fields.length - 1}
-              isTopLevel
               key={field.id}
               onChange={changeValue}
               values={values}

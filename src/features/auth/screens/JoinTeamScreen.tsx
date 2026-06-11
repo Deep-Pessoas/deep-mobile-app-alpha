@@ -27,6 +27,14 @@ export function JoinTeamScreen() {
 
   const digits = pin.split('');
 
+  // Reabre o teclado. Quando o teclado é fechado (arrastar/voltar) o TextInput
+  // continua "focado" internamente no RN, então focus() sozinho é ignorado.
+  // blur() + focus() força o sistema a reabrir o teclado.
+  const focusInput = () => {
+    inputRef.current?.blur();
+    inputRef.current?.focus();
+  };
+
   const handleSubmit = async () => {
     if (pin.length !== 4 || isLoading || !session) return;
     setIsLoading(true);
@@ -70,12 +78,13 @@ export function JoinTeamScreen() {
           </Text>
         </View>
 
-        {/* Hidden input captures keyboard — visible boxes show digits */}
+        {/* Hidden input captures keyboard — visible boxes show digits.
+            Must have at least 1×1px on Android so the system considers it
+            focusable after the keyboard is dismissed and focus() is called. */}
         <TextInput
           ref={inputRef}
           autoFocus
           caretHidden
-          className="absolute h-0 w-0 opacity-0"
           editable={!isLoading}
           keyboardType="number-pad"
           maxLength={4}
@@ -85,13 +94,15 @@ export function JoinTeamScreen() {
           }}
           onSubmitEditing={handleSubmit}
           returnKeyType="go"
+          showSoftInputOnFocus
+          style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
           value={pin}
         />
 
         {/* PIN display — tapping anywhere refocuses the hidden input */}
         <Pressable
           className="flex-row justify-center gap-4"
-          onPress={() => inputRef.current?.focus()}
+          onPress={focusInput}
         >
           {[0, 1, 2, 3].map((i) => {
             const filled = i < digits.length;

@@ -83,7 +83,7 @@ export async function getRecordsByBackofficeStatus(database: SQLiteDatabase): Pr
     if (situacao && situacao.nome === 'Pendente') {
       return {
         statusGuid,
-        statusName: 'Já preenchendo.',
+        statusName: 'Já preenchido.',
         statusColor: situacao.cor,
         count: row.total,
       };
@@ -100,7 +100,7 @@ export async function getRecordsByBackofficeStatus(database: SQLiteDatabase): Pr
 
     return {
       statusGuid,
-      statusName: 'Já preenchendo.',
+      statusName: 'Já preenchido.',
       count: row.total,
     };
   });
@@ -201,9 +201,9 @@ export async function getRecordsWithFilter(
 
     let statusName = hasOfflineDraft ? row.local_status ?? 'Rascunho' : row.backoffice_status_name ?? 'Disponivel para preenchimento';
     if (!hasOfflineDraft && row.backoffice_status_name === 'Pendente') {
-      statusName = 'Ja preenchendo, aguardo backoffice';
+      statusName = 'Ja preenchido, aguardo backoffice';
     } else if (!hasOfflineDraft && !row.backoffice_status_name && statusGuid) {
-      statusName = 'Ja preenchendo, aguardo backoffice';
+      statusName = 'Ja preenchido, aguardo backoffice';
     }
 
     return {

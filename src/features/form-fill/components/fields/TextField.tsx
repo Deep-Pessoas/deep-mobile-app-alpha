@@ -14,8 +14,8 @@ type Props = {
   value: FormValue;
 };
 
-// Espaco extra acima do campo focado ao rolar para deixa-lo visivel acima do teclado.
-const FOCUS_SCROLL_OFFSET = 96;
+// Folga entre a base do campo focado e o topo do teclado.
+const FOCUS_MARGIN = 80;
 
 export function TextField({ error, field, multiline = false, onChange, value }: Props) {
   const isNumber = field.type === 'number';
@@ -31,23 +31,32 @@ export function TextField({ error, field, multiline = false, onChange, value }: 
   const scrollIntoView = () => {
     const performScroll = () => {
       const scrollView = keyboardScroll?.scrollViewRef.current;
-      const y = keyboardScroll?.fieldOffsets.current.get(field.id);
-      if (!scrollView || y === undefined) return;
+      const input = inputRef.current;
+      const metrics = Keyboard.metrics();
+      if (!scrollView || !input || !metrics || !keyboardScroll) return;
 
-      scrollView.scrollTo({ animated: true, y: Math.max(y - FOCUS_SCROLL_OFFSET, 0) });
+      // Geometria ao vivo: mede onde o input esta na janela e onde o teclado
+      // comeca. Se a base do input (mais a folga) passa do topo do teclado, rola
+      // exatamente essa diferenca a partir do offset atual. Determinista e
+      // independente do tamanho/estrutura do formulario.
+      input.measureInWindow((_x, y, _w, h) => {
+        const keyboardTop = metrics.screenY;
+        const overlap = y + h + FOCUS_MARGIN - keyboardTop;
+        if (overlap > 0) {
+          scrollView.scrollTo({ animated: true, y: keyboardScroll.scrollY.current + overlap });
+        }
+      });
     };
 
     if (Keyboard.isVisible()) {
-      // Teclado ja esta aberto (trocando de campo): a area visivel do ScrollView
-      // ja esta no tamanho final, basta medir e rolar.
+      // Teclado ja aberto (trocando de campo): metrics e a area visivel ja estao
+      // no estado final, basta medir e rolar.
       requestAnimationFrame(performScroll);
       return;
     }
 
-    // Com windowSoftInputMode "resize", a janela so encolhe (e o ScrollView so
-    // ganha sua altura final) quando o teclado termina de aparecer. Rolar antes
-    // disso faz o calculo de offset usar a altura antiga e o campo continua
-    // coberto pelo teclado.
+    // Teclado ainda fechado: so apos abrir o Keyboard.metrics() conhece a posicao
+    // real do topo do teclado. Espera o evento para medir corretamente.
     const subscription = Keyboard.addListener('keyboardDidShow', () => {
       subscription.remove();
       requestAnimationFrame(performScroll);

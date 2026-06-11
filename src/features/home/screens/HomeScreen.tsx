@@ -146,9 +146,9 @@ export function HomeScreen() {
     : null;
 
   const metricCards = [
-    { label: 'Com retorno backoffice', value: data.backofficeReturnCount, color: '#f59e0b' },
-    { label: 'Situações de Campo', value: data.situacaoDeCampoCount, color: '#0ea5e9' },
-    { label: 'Pendente de sincronização', value: data.pendingSyncCount, color: '#ef4444' },
+    { label: 'Com retorno backoffice', value: data.backofficeReturnCount, color: '#fff9ee' },
+    { label: 'Situações de Campo', value: data.situacaoDeCampoCount, color: '#fff9ee' },
+    { label: 'Pendente de sincronização', value: data.pendingSyncCount, color: '#fff9ee' },
   ];
 
   return (
@@ -214,8 +214,6 @@ export function HomeScreen() {
           onPress={() => navigateTo('records')}
           style={{
             elevation: 6,
-         
-            shadowRadius: 12,
           }}
         >
           <View>

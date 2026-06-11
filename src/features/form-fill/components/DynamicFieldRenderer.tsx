@@ -3,7 +3,6 @@ import { Text, View } from 'react-native';
 
 import { isFieldVisible } from '../engine/formEngine';
 import type { DynamicField, FormErrors, FormValue, FormValues } from '../types/form';
-import { useKeyboardScrollContext } from './KeyboardScrollContext';
 import { useRetornos } from './RetornosContext';
 import { CheckboxField } from './fields/CheckboxField';
 import { DateTimeField } from './fields/DateTimeField';
@@ -26,21 +25,10 @@ type Props = {
   effectiveValues: FormValues;
   field: DynamicField;
   isLastChild?: boolean;
-  isTopLevel?: boolean;
   onChange: (fieldId: string, value: FormValue) => void;
   parentVisible?: boolean;
   values: FormValues;
 };
-
-// Coleta o id do campo e, recursivamente, os ids de todos os campos filhos (grupos),
-// para que o foco em um campo dentro de um grupo role ate o topo do grupo.
-function collectFieldIds(field: DynamicField): string[] {
-  const ids = [field.id];
-  for (const child of field.config.children ?? []) {
-    ids.push(...collectFieldIds(child));
-  }
-  return ids;
-}
 
 function DynamicFieldRendererComponent({
   draftScope,
@@ -48,12 +36,10 @@ function DynamicFieldRendererComponent({
   effectiveValues,
   field,
   isLastChild = false,
-  isTopLevel = false,
   onChange,
   parentVisible = true,
   values,
 }: Props) {
-  const keyboardScroll = useKeyboardScrollContext();
   const reprovados = useRetornos();
   const changeFieldValue = useCallback(
     (value: FormValue) => onChange(field.id, value),
@@ -85,25 +71,7 @@ function DynamicFieldRendererComponent({
     );
   };
 
-  const wrap = (node: React.ReactNode) => {
-    if (!isTopLevel || !keyboardScroll) {
-      return <View style={fieldSpacingStyle}>{node}</View>;
-    }
-
-    return (
-      <View
-        onLayout={(event) => {
-          const { y } = event.nativeEvent.layout;
-          for (const id of collectFieldIds(field)) {
-            keyboardScroll.fieldOffsets.current.set(id, y);
-          }
-        }}
-        style={fieldSpacingStyle}
-      >
-        {node}
-      </View>
-    );
-  };
+  const wrap = (node: React.ReactNode) => <View style={fieldSpacingStyle}>{node}</View>;
 
   switch (field.type.toLowerCase()) {
     case 'text':
