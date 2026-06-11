@@ -3,20 +3,44 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@react-native-community/datetimepicker": "^9.1.0",
+    "@react-navigation/native": "^7.3.0",
+    "@react-navigation/native-stack": "^7.17.2",
+    "@tanstack/react-query": "^5.101.0",
+    "axios": "^1.17.0",
     "expo": "~56.0.9",
+    "expo-constants": "~56.0.17",
+    "expo-device": "~56.0.4",
+    "expo-document-picker": "~56.0.4",
+    "expo-file-system": "~56.0.7",
+    "expo-image": "~56.0.11",
+    "expo-image-picker": "~56.0.16",
+    "expo-location": "~56.0.16",
+    "expo-network": "~7.0.0",
+    "expo-notifications": "~56.0.16",
+    "expo-splash-screen": "~56.0.10",
+    "expo-sqlite": "~56.0.4",
     "expo-status-bar": "~56.0.4",
+    "nativewind": "^4.2.5",
     "react": "19.2.3",
-    "react-native": "0.85.3"
+    "react-native": "0.85.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "4.25.2",
+    "react-native-svg": "^15.15.4",
+    "tailwindcss": "^3.4.19"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "~56.0.14",
     "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "build:apk": "npx eas-cli@latest build --platform android --profile apk",
+    "build:apk:eas": "npx eas-cli@latest build --platform android --profile apk",
+    "build:apk:local": "expo prebuild --platform android && cd android && gradlew.bat assembleRelease"
   },
   "private": true
 }

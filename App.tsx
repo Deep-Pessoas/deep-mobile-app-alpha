@@ -1,20 +1,32 @@
+import './global.css';
+
+import { NavigationContainer } from '@react-navigation/native';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { SQLiteProvider } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+import { AuthProvider } from './src/features/auth/context/AuthContext';
+import { AppNavigator } from './src/navigation/AppNavigator';
+import { migrateDatabase } from './src/shared/database/migrations';
+import { NetworkProvider } from './src/shared/context/NetworkContext';
+import { queryClient } from './src/shared/query/queryClient';
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <SafeAreaProvider>
+      <NetworkProvider>
+        <SQLiteProvider databaseName="deep-agente.db" onInit={migrateDatabase}>
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>
+              <NavigationContainer>
+                <StatusBar style="dark" />
+                <AppNavigator />
+              </NavigationContainer>
+            </AuthProvider>
+          </QueryClientProvider>
+        </SQLiteProvider>
+      </NetworkProvider>
+    </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

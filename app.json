@@ -1,25 +1,45 @@
 {
   "expo": {
-    "name": "new-mobile-app",
+    "name": "Deep - Agente",
     "slug": "new-mobile-app",
     "version": "1.0.0",
+    "platforms": [
+      "android"
+    ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "ios": {
-      "supportsTablet": true
-    },
+    "primaryColor": "#ef561d",
+    "backgroundColor": "#fff6ed",
     "android": {
+      "package": "com.triks.deepagente",
+      "versionCode": 2,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#fff6ed",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": true,
+      "softwareKeyboardLayoutMode": "resize"
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    }
+    "plugins": [
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Permita que o Deep Agente use a camera para preencher formularios.",
+          "microphonePermission": false,
+          "photosPermission": "Permita que o Deep Agente acesse suas imagens para preencher formularios."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Permita que o Deep Agente capture a localizacao durante o preenchimento."
+        }
+      ],
+      "expo-notifications"
+    ]
   }
 }
