@@ -3,6 +3,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { apiClient } from '../../../shared/api/apiClient';
 import { getErrorMessage } from '../../../shared/utils/getErrorMessage';
+import { getFormBaseDados } from '../../consolidated-data/services/offlineQueries';
 import { collectFieldsByType } from '../../form-fill/engine/formEngine';
 import { deleteDraftDirectory } from '../../form-fill/services/draftFileService';
 import { clearFillRecordDraft, parseFields } from '../../form-fill/services/fillRecordService';
@@ -19,16 +20,16 @@ type AgentProfileRow = {
 type DraftRow = {
   dados_json: string | null;
   form_guid: string;
+  latitude: string | null;
+  longitude: string | null;
   record_guid: string;
   state_json: string | null;
+  updated_at: string;
   values_json: string | null;
 };
 
 type RecordRow = {
   base_dados_guid: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  raw_json: string;
 };
 
 type SyncApiResponse = {
@@ -128,37 +129,11 @@ async function buildUploads(uploadFields: DynamicField[], dados: FormValues, sta
   return uploads;
 }
 
-/**
- * Procura coordenadas dentro de campos do tipo "mult_capturas" (cada captura guarda
- * { id, label, latitude, longitude }). Se nenhuma captura tiver coordenadas, usa as
- * coordenadas do registro salvas localmente.
- */
-function resolveCoordinates(multCapturaFields: DynamicField[], dados: FormValues, record: RecordRow) {
-  for (const field of multCapturaFields) {
-    const value = dados[field.id];
-    if (!Array.isArray(value)) continue;
-
-    for (const item of value) {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-      const capture = item as Record<string, FormValue>;
-      const { latitude, longitude } = capture;
-      if ((typeof latitude === 'number' || typeof latitude === 'string')
-        && (typeof longitude === 'number' || typeof longitude === 'string')) {
-        return { latitude: String(latitude), longitude: String(longitude) };
-      }
-    }
-  }
-
-  return {
-    latitude: record.latitude != null ? String(record.latitude) : '',
-    longitude: record.longitude != null ? String(record.longitude) : '',
-  };
-}
-
 const BASELESS_GUID = '00000000-0000-0000-0000-000000000000';
 
 export async function getSyncableDrafts(database: SQLiteDatabase): Promise<SyncableDraft[]> {
   const rows = await database.getAllAsync<{
+    id: string;
     dados_json: string | null;
     form_guid: string;
     form_name: string | null;
@@ -169,6 +144,7 @@ export async function getSyncableDrafts(database: SQLiteDatabase): Promise<Synca
     updated_at: string;
   }>(
     `SELECT
+      drafts.id,
       drafts.record_guid,
       records.name AS record_name,
       records.base_dados_guid,
@@ -198,6 +174,7 @@ export async function getSyncableDrafts(database: SQLiteDatabase): Promise<Synca
       : '';
 
     return {
+      draftId: row.id,
       fieldsCount,
       formGuid: row.form_guid,
       formName: row.form_name ?? '',
@@ -220,6 +197,7 @@ export async function getSyncableDrafts(database: SQLiteDatabase): Promise<Synca
  */
 export async function syncDraft(database: SQLiteDatabase, agentGuid: string, draft: SyncableDraft): Promise<SyncResult> {
   const failure = (message: string): SyncResult => ({
+    draftId: draft.draftId,
     formGuid: draft.formGuid,
     message,
     recordGuid: draft.recordGuid,
@@ -245,16 +223,15 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
     }
 
     const draftRow = await database.getFirstAsync<DraftRow>(
-      'SELECT record_guid, form_guid, dados_json, state_json, values_json FROM offline_form_drafts WHERE record_guid = ? AND form_guid = ? LIMIT 1',
-      draft.recordGuid,
-      draft.formGuid,
+      'SELECT record_guid, form_guid, dados_json, state_json, values_json, latitude, longitude, updated_at FROM offline_form_drafts WHERE id = ? LIMIT 1',
+      draft.draftId,
     );
     if (!draftRow?.dados_json) {
       return failure('Dados do preenchimento nao encontrados nos dados offline.');
     }
 
     const recordRow = await database.getFirstAsync<RecordRow>(
-      'SELECT base_dados_guid, latitude, longitude, raw_json FROM offline_records WHERE guid = ?',
+      'SELECT base_dados_guid FROM offline_records WHERE guid = ?',
       draft.recordGuid,
     );
     if (!recordRow) {
@@ -271,40 +248,48 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
     const stateValues = parseFormValues(draftRow.state_json ?? draftRow.values_json);
 
     const uploadFields = collectFieldsByType(fields, ['upload']);
-    const multCapturaFields = collectFieldsByType(fields, ['mult_capturas']);
 
     const uploads = await buildUploads(uploadFields, dados, stateValues);
 
-    // Situação de Campo photo upload
+    // Situação de Campo: o "campo" da foto e identificado pelo GUID da situacao selecionada
+    // (mesma chave usada em dados[guid] e em situacao_campo_id) — nao por um literal "foto".
+    const dadosRecord = dados as Record<string, unknown>;
+    const situacaoData = dadosRecord.situacao as Record<string, unknown> | undefined;
+    const situacaoCampoId = typeof situacaoData?.guid === 'string' ? situacaoData.guid : null;
+
     const situacaoFotoUris = asStringArray(stateValues['__situacao_foto__']);
-    let situacaoCampoId: string | null = null;
-    if (situacaoFotoUris.length > 0) {
+    if (situacaoFotoUris.length > 0 && situacaoCampoId) {
       const uri = situacaoFotoUris[0];
       const fileName = uri.split('/').pop() ?? 'foto.jpg';
       // Mesma regra tudo-ou-nada: se a foto da situacao foi registrada mas nao pode ser lida,
       // falha o envio (mantem o rascunho) em vez de enviar a situacao sem a foto.
       const base64 = await new File(uri).base64();
-      uploads.push({ field_id: 'foto', urls: [`data:${inferMimeType(fileName)};base64,${base64}`] });
-    }
-    const dadosRecord = dados as Record<string, unknown>;
-    const situacaoData = dadosRecord.situacao as Record<string, unknown> | undefined;
-    if (typeof situacaoData?.guid === 'string') {
-      situacaoCampoId = situacaoData.guid;
+      uploads.push({ field_id: situacaoCampoId, urls: [`data:${inferMimeType(fileName)};base64,${base64}`] });
     }
 
-    const { latitude, longitude } = resolveCoordinates(multCapturaFields, dados, recordRow);
+    // Coordenada do proprio preenchimento (capturada na conclusao). Nenhum preenchimento pode
+    // ser enviado sem latitude/longitude — sem elas, falha o envio e mantem o rascunho.
+    const latitude = draftRow.latitude ?? '';
+    const longitude = draftRow.longitude ?? '';
+    if (!latitude || !longitude) {
+      return failure('Este preenchimento não possui localização (latitude/longitude). Refaça o preenchimento com o GPS ativo.');
+    }
 
     const payload = {
-      agente_id: agentProfile.guid,
-      base_dados_guid: baseDadosGuid,
       contrato_id: agentProfile.contract_guid,
-      dados,
+      base_dados_guid: baseDadosGuid,
       equipe_id: agentProfile.team_guid,
+      agente_id: agentProfile.guid,
       form_id: draft.formGuid,
+      dados,
+      uploads,
       latitude,
       longitude,
+      registro_campo_guid: '',
+      form_base_dados: await getFormBaseDados(database),
       situacao_campo_id: situacaoCampoId,
-      uploads,
+      // created_at acompanha o envio de situacao de campo (data em que foi registrada).
+      ...(situacaoCampoId ? { created_at: draftRow.updated_at } : {}),
     };
 
     const response = await apiClient.post<SyncApiResponse>('/campo-visitas/registro', payload, { timeout: SYNC_TIMEOUT_MS });
@@ -315,10 +300,11 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
       return failure(response.data?.mensagem || 'A API retornou uma resposta inesperada ao processar o preenchimento.');
     }
 
-    await clearFillRecordDraft(database, draft.recordGuid, draft.formGuid);
-    deleteDraftDirectory(draft.recordGuid, draft.formGuid);
+    await clearFillRecordDraft(database, draft.draftId);
+    deleteDraftDirectory(draft.draftId);
 
     return {
+      draftId: draft.draftId,
       formGuid: draft.formGuid,
       recordGuid: draft.recordGuid,
       recordName: draft.recordName,

@@ -13,7 +13,7 @@ import type { SyncableDraft, SyncResult } from '../types/sync';
 type SyncPhase = 'idle' | 'syncing' | 'done';
 
 function draftKey(d: SyncableDraft) {
-  return `${d.recordGuid}:${d.formGuid}`;
+  return d.draftId;
 }
 
 function formatDate(iso: string) {
@@ -113,7 +113,7 @@ export function SyncScreen() {
       session.agent.guid,
       drafts,
       (result, completed, total) => {
-        setResultsByKey((prev) => ({ ...prev, [`${result.recordGuid}:${result.formGuid}`]: result }));
+        setResultsByKey((prev) => ({ ...prev, [result.draftId]: result }));
         setProgress({ completed, total });
         Animated.timing(progressWidth, {
           duration: 200,

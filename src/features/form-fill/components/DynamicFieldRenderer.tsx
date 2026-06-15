@@ -17,6 +17,7 @@ import { UploadField } from './fields/UploadField';
 
 type Props = {
   draftScope: {
+    draftId: string;
     formGuid: string;
     recordGuid: string;
   };

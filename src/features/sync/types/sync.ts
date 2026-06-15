@@ -1,4 +1,5 @@
 export type SyncableDraft = {
+  draftId: string;
   recordGuid: string;
   recordName: string;
   formGuid: string;
@@ -12,6 +13,7 @@ export type SyncableDraft = {
 };
 
 export type SyncResult = {
+  draftId: string;
   recordGuid: string;
   formGuid: string;
   recordName: string;

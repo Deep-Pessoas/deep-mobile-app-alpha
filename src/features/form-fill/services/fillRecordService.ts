@@ -1,6 +1,15 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import type { Coordinates } from './locationService';
 import type { DadosRetornos, DynamicField, FillRecordData, FillRecordLocalStatus, FormValues, OfflineDraftPayload, RetornoItem } from '../types/form';
+
+const BASELESS_GUID = '00000000-0000-0000-0000-000000000000';
+
+// Id deterministico do rascunho retomavel de um formulario COM base: um unico rascunho
+// por registro+formulario, retomado a cada reabertura.
+export function draftIdForRecord(recordGuid: string, formGuid: string): string {
+  return `${recordGuid}:${formGuid}`;
+}
 
 type StoredForm = {
   contract_guid: string | null;
@@ -156,17 +165,22 @@ export async function getFillRecordData(database: SQLiteDatabase, recordGuid: st
 
   if (!record || !form) return null;
 
-  const draft = await database.getFirstAsync<{ state_json: string | null; status: FillRecordLocalStatus; updated_at_ms: number; values_json: string }>(
-    'SELECT state_json, status, updated_at_ms, values_json FROM offline_form_drafts WHERE record_guid = ? AND form_guid = ? LIMIT 1',
-    recordGuid,
-    form.guid,
-  );
+  // Modo sem base nao tem rascunho: cada preenchimento e independente e so e gravado
+  // ao concluir. Por isso nao carregamos rascunho aqui (form sempre limpo).
+  const isBaseless = recordGuid === BASELESS_GUID;
+  const draft = isBaseless
+    ? null
+    : await database.getFirstAsync<{ state_json: string | null; status: FillRecordLocalStatus; updated_at_ms: number; values_json: string }>(
+      'SELECT state_json, status, updated_at_ms, values_json FROM offline_form_drafts WHERE id = ? LIMIT 1',
+      draftIdForRecord(recordGuid, form.guid),
+    );
   lastDraftVersion = Math.max(lastDraftVersion, draft?.updated_at_ms ?? 0);
 
   const fields = parseFields(form.raw_json);
   const rawData = parseRecordData(record.raw_json);
 
   return {
+    isBaseless,
     hasDraft: Boolean(draft),
     draftStatus: draft?.status ?? null,
     draftValues: parseDraftValues(draft?.state_json ?? draft?.values_json),
@@ -190,29 +204,36 @@ export async function getFillRecordData(database: SQLiteDatabase, recordGuid: st
 
 export async function saveFillRecordDraft(
   database: SQLiteDatabase,
+  draftId: string,
   recordGuid: string,
   formGuid: string,
   state: FormValues,
   dados: FormValues,
   status: FillRecordLocalStatus = 'Rascunho',
+  coords: Coordinates | null = null,
 ) {
   const draftVersion = nextDraftVersion();
   const updatedAt = new Date().toISOString();
   // values_json e state_json guardam o mesmo conteudo: serializa uma unica vez para nao
   // pagar dois JSON.stringify (potencialmente grandes, ex.: assinatura em base64) por save.
   const stateJson = JSON.stringify(state);
+  // COALESCE preserva a coordenada ja capturada quando um save posterior (ex.: autosave de
+  // rascunho) nao traz coords — a coordenada e gravada na conclusao e nao deve ser perdida.
   await database.runAsync(
     `INSERT INTO offline_form_drafts
-       (record_guid, form_guid, values_json, state_json, dados_json, status, updated_at, updated_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(record_guid, form_guid) DO UPDATE SET
+       (id, record_guid, form_guid, values_json, state_json, dados_json, status, updated_at, updated_at_ms, latitude, longitude)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
        values_json = excluded.values_json,
        state_json = excluded.state_json,
        dados_json = excluded.dados_json,
        status = excluded.status,
        updated_at = excluded.updated_at,
-       updated_at_ms = excluded.updated_at_ms
+       updated_at_ms = excluded.updated_at_ms,
+       latitude = COALESCE(excluded.latitude, offline_form_drafts.latitude),
+       longitude = COALESCE(excluded.longitude, offline_form_drafts.longitude)
      WHERE excluded.updated_at_ms >= offline_form_drafts.updated_at_ms`,
+    draftId,
     recordGuid,
     formGuid,
     stateJson,
@@ -221,6 +242,8 @@ export async function saveFillRecordDraft(
     status,
     updatedAt,
     draftVersion,
+    coords?.latitude ?? null,
+    coords?.longitude ?? null,
   );
 }
 
@@ -230,50 +253,53 @@ export async function saveFillRecordDraft(
  * Usado logo apos "Concluir": so dizemos "Salvo" ao usuario se o dado estiver provadamente
  * no banco e visivel para o Sync — em vez de confiar que o INSERT funcionou.
  */
-export async function isDraftReadyForSync(database: SQLiteDatabase, recordGuid: string, formGuid: string): Promise<boolean> {
+export async function isDraftReadyForSync(database: SQLiteDatabase, draftId: string): Promise<boolean> {
   const row = await database.getFirstAsync<{ status: string; dados_json: string | null }>(
-    'SELECT status, dados_json FROM offline_form_drafts WHERE record_guid = ? AND form_guid = ? LIMIT 1',
-    recordGuid,
-    formGuid,
+    'SELECT status, dados_json FROM offline_form_drafts WHERE id = ? LIMIT 1',
+    draftId,
   );
   return row?.status === 'Preenchendo offline' && !!row.dados_json;
 }
 
-export async function clearFillRecordDraft(database: SQLiteDatabase, recordGuid: string, formGuid: string) {
+export async function clearFillRecordDraft(database: SQLiteDatabase, draftId: string) {
   await database.runAsync(
-    'DELETE FROM offline_form_drafts WHERE record_guid = ? AND form_guid = ?',
-    recordGuid,
-    formGuid,
+    'DELETE FROM offline_form_drafts WHERE id = ?',
+    draftId,
   );
 }
 
 export async function saveSituacaoDeCampo(
   database: SQLiteDatabase,
+  draftId: string,
   recordGuid: string,
   formGuid: string,
   situacao: { guid: string; titulo: string },
   photoUri: string,
+  coords: Coordinates,
 ) {
+  // A foto ja foi persistida no momento da captura (form-drafts/<draftId>/foto), garantindo
+  // que sobreviva ao cache volatil do SO e que o preview a exiba. Aqui so registramos a linha.
+  // `draftId` e proprio desta situacao para que NUNCA sobrescreva o preenchimento do
+  // formulario nem outra situacao no mesmo registro.
   const fileName = photoUri.split('/').pop() ?? `situacao-${Date.now()}.jpg`;
+
   const draftVersion = nextDraftVersion();
   const updatedAt = new Date().toISOString();
 
   const state = { __situacao_foto__: [photoUri] };
-  const dados = { situacao: { guid: situacao.guid, titulo: situacao.titulo, foto: fileName } };
+  // dados leva o objeto `situacao` e tambem a chave com o GUID da situacao apontando para o
+  // nome do arquivo da foto — exatamente o formato esperado pelo backend no envio.
+  const dados = {
+    situacao: { guid: situacao.guid, titulo: situacao.titulo, foto: fileName },
+    [situacao.guid]: fileName,
+  };
   const stateJson = JSON.stringify(state);
 
   await database.runAsync(
     `INSERT INTO offline_form_drafts
-       (record_guid, form_guid, values_json, state_json, dados_json, status, updated_at, updated_at_ms)
-     VALUES (?, ?, ?, ?, ?, 'Preenchendo offline', ?, ?)
-     ON CONFLICT(record_guid, form_guid) DO UPDATE SET
-       values_json = excluded.values_json,
-       state_json = excluded.state_json,
-       dados_json = excluded.dados_json,
-       status = excluded.status,
-       updated_at = excluded.updated_at,
-       updated_at_ms = excluded.updated_at_ms
-     WHERE excluded.updated_at_ms >= offline_form_drafts.updated_at_ms`,
+       (id, record_guid, form_guid, values_json, state_json, dados_json, status, updated_at, updated_at_ms, latitude, longitude)
+     VALUES (?, ?, ?, ?, ?, ?, 'Preenchendo offline', ?, ?, ?, ?)`,
+    draftId,
     recordGuid,
     formGuid,
     stateJson,
@@ -281,5 +307,7 @@ export async function saveSituacaoDeCampo(
     JSON.stringify({ dados } satisfies OfflineDraftPayload),
     updatedAt,
     draftVersion,
+    coords.latitude,
+    coords.longitude,
   );
 }

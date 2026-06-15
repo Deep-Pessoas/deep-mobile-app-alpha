@@ -11,6 +11,7 @@ import { CameraIcon, ImageIcon, PlusIcon, TrashIcon } from '../../../../shared/c
 
 type Props = {
   draftScope: {
+    draftId: string;
     formGuid: string;
     recordGuid: string;
   };
@@ -86,7 +87,7 @@ export function UploadField({ draftScope, error, field, onChange, value }: Props
 
     setBusyAction('persist');
     try {
-      const results = await persistDraftFiles(draftScope.recordGuid, draftScope.formGuid, field.id, uris);
+      const results = await persistDraftFiles(draftScope.draftId, field.id, uris);
       const persistedUris = results
         .filter((result): result is { ok: true; uri: string } => result.ok)
         .map((result) => result.uri);

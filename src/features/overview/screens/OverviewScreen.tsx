@@ -12,7 +12,7 @@ import { useNetwork } from '../../../shared/context/NetworkContext';
 
 export function OverviewScreen() {
   const database = useSQLiteContext();
-  const { session, signOut } = useAuth();
+  const { clearOfflineReady, session, signOut } = useAuth();
   const { isOnline } = useNetwork();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -20,6 +20,7 @@ export function OverviewScreen() {
   const [loading, setLoading] = useState(true);
   const [resetting, setResetting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showReloadConfirm, setShowReloadConfirm] = useState(false);
   const [pendingDrafts, setPendingDrafts] = useState(0);
 
   type PermissionKey = 'location' | 'camera' | 'media';
@@ -117,6 +118,22 @@ export function OverviewScreen() {
     try {
       await clearAllOfflineData(database, session.agent.guid);
       await signOut();
+    } catch {
+      setResetting(false);
+    }
+  };
+
+  // Recarrega os dados sem encerrar a sessao: limpa todos os dados offline (igual ao
+  // "Resetar tudo"), mas mantem a sessao salva e leva para a tela de preparacao, que
+  // baixa os dados novamente. clearOfflineReady() marca isOfflineReady=false e o
+  // RootNavigator roteia para a Preparacao.
+  const handleReloadData = async () => {
+    if (!session) return;
+    setResetting(true);
+    setShowReloadConfirm(false);
+    try {
+      await clearAllOfflineData(database, session.agent.guid);
+      clearOfflineReady();
     } catch {
       setResetting(false);
     }
@@ -299,6 +316,23 @@ export function OverviewScreen() {
           </View>
         ) : null}
         <Pressable
+          className="mb-3 min-h-14 items-center justify-center rounded-2xl border border-primary-500 bg-white px-4 active:bg-primary-50 disabled:opacity-50"
+          disabled={resetting || !isOnline || pendingDrafts > 0}
+          onPress={() => setShowReloadConfirm(true)}
+        >
+          {resetting ? (
+            <ActivityIndicator color="#8b5cf6" />
+          ) : !isOnline ? (
+            <Text className="text-base font-semibold text-primary-600">Recarregar dados · Sem conexão</Text>
+          ) : pendingDrafts > 0 ? (
+            <Text className="text-base font-semibold text-primary-600">
+              Recarregar dados · {pendingDrafts} pendente{pendingDrafts === 1 ? '' : 's'}
+            </Text>
+          ) : (
+            <Text className="text-base font-semibold text-primary-600">Recarregar dados (manter sessão)</Text>
+          )}
+        </Pressable>
+        <Pressable
           className="min-h-14 items-center justify-center rounded-2xl bg-red-500 px-4 active:bg-red-600 disabled:opacity-50"
           disabled={resetting || !isOnline || pendingDrafts > 0}
           onPress={() => setShowConfirm(true)}
@@ -348,6 +382,43 @@ export function OverviewScreen() {
                 onPress={handleReset}
               >
                 <Text className="font-semibold text-white">Resetar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setShowReloadConfirm(false)}
+        statusBarTranslucent={Platform.OS === 'android'}
+        transparent
+        visible={showReloadConfirm}
+      >
+        <View
+          className="flex-1 items-center justify-center bg-black/50 px-6"
+          style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
+        >
+          <View className="items-center rounded-3xl bg-white p-6" style={{ width: modalWidth }}>
+            <View className="h-14 w-14 items-center justify-center rounded-full bg-primary-100">
+              <Text className="text-2xl font-bold text-primary-600">↻</Text>
+            </View>
+            <Text className="mt-4 text-center text-xl font-semibold text-zinc-950">Recarregar dados</Text>
+            <Text className="mt-2 text-center text-sm leading-5 text-zinc-600">
+              Isso vai limpar todos os dados offline e baixá-los novamente. Sua sessão será mantida.
+            </Text>
+            <View className="mt-6 w-full flex-row gap-3">
+              <Pressable
+                className="min-h-12 flex-1 items-center justify-center rounded-2xl border border-zinc-300 bg-white px-4"
+                onPress={() => setShowReloadConfirm(false)}
+              >
+                <Text className="font-semibold text-zinc-700">Cancelar</Text>
+              </Pressable>
+              <Pressable
+                className="min-h-12 flex-1 items-center justify-center rounded-2xl bg-primary-500 px-4 active:bg-primary-600"
+                onPress={handleReloadData}
+              >
+                <Text className="font-semibold text-white">Recarregar</Text>
               </Pressable>
             </View>
           </View>

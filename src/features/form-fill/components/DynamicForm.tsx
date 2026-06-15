@@ -13,7 +13,9 @@ import { SituacaoDeCampoFlow } from './SituacaoDeCampoFlow';
 import { createOfflineDraftData } from '../engine/formEngine';
 import { useDraftAutosave } from '../hooks/useDraftAutosave';
 import { useDynamicForm } from '../hooks/useDynamicForm';
-import { isDraftReadyForSync } from '../services/fillRecordService';
+import { uuidv4 } from '../services/draftFileService';
+import { draftIdForRecord, isDraftReadyForSync } from '../services/fillRecordService';
+import { getCurrentCoordinates } from '../services/locationService';
 import { findFieldLabel } from '../utils/findFieldLabel';
 import type { FillRecordData, FillRecordLocalStatus, FormValue } from '../types/form';
 import { AlertModal } from '../../../shared/components/AlertModal';
@@ -64,9 +66,18 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
     () => ({ scrollViewRef, scrollY }),
     [],
   );
+  // Id estavel por sessao de preenchimento. COM base: deterministico (rascunho retomavel).
+  // SEM base: UUID novo a cada montagem, para que cada preenchimento vire uma linha
+  // independente no banco e nunca sobrescreva outro.
+  const draftIdRef = useRef(
+    data.isBaseless ? uuidv4() : draftIdForRecord(data.record.guid, data.form.guid),
+  );
+  const draftId = draftIdRef.current;
+  const enableDraft = !data.isBaseless;
+
   const draftScope = useMemo(
-    () => ({ formGuid: data.form.guid, recordGuid: data.record.guid }),
-    [data.form.guid, data.record.guid],
+    () => ({ draftId, formGuid: data.form.guid, recordGuid: data.record.guid }),
+    [draftId, data.form.guid, data.record.guid],
   );
 
   const { persistDraft, saveState, setLocalStatus, startFresh } = useDraftAutosave({
@@ -74,7 +85,9 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
     data,
     database,
     draftData,
+    draftId,
     draftPromptHandled,
+    enableDraft,
     isDirty,
     markSaved,
     onLocalStateSaved,
@@ -129,16 +142,29 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
     }
 
     try {
+      // Coordenada do proprio preenchimento (latitude/longitude do topo do registro), capturada
+      // do GPS agora, na conclusao. Toda conclusao precisa dela — nenhum preenchimento pode ser
+      // concluido/enviado sem latitude/longitude.
+      const coordinates = await getCurrentCoordinates();
+      if (!coordinates) {
+        setAlertState({
+          confirmLabel: 'Fechar',
+          description: 'Nao foi possivel obter a localizacao (latitude/longitude) deste preenchimento. Ative o GPS e a permissao de localizacao e tente concluir novamente.',
+          title: 'Localizacao necessaria',
+        });
+        return;
+      }
+
       setLocalStatus('Preenchendo offline');
       // Recalcula o payload "dados" a partir dos valores atuais (nao da copia adiada),
       // garantindo que o ultimo caractere digitado entre no envio mesmo se o submit
       // ocorrer no mesmo quadro da ultima tecla.
       const freshDraftData = createOfflineDraftData(data.form.fields, values);
-      await persistDraft(values, freshDraftData, 'Preenchendo offline');
+      await persistDraft(values, freshDraftData, 'Preenchendo offline', undefined, coordinates);
 
       // Verificacao de integridade: le de volta do banco antes de confirmar ao usuario.
       // So mostra "Salvo" se o preenchimento realmente ficou persistido e visivel para o Sync.
-      const persisted = await isDraftReadyForSync(database, data.record.guid, data.form.guid);
+      const persisted = await isDraftReadyForSync(database, draftId);
       if (!persisted) {
         setAlertState({
           confirmLabel: 'Fechar',

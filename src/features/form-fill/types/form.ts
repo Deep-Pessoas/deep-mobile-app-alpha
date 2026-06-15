@@ -72,6 +72,7 @@ export type DadosRetornos = {
 };
 
 export type FillRecordData = {
+  isBaseless: boolean;
   hasDraft: boolean;
   draftStatus: FillRecordLocalStatus | null;
   draftValues: FormValues;

@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 12;
+const DATABASE_VERSION = 14;
 
 async function ensureRecordsSearchTriggers(database: SQLiteDatabase) {
   await database.execAsync(`
@@ -297,6 +297,53 @@ export async function migrateDatabase(database: SQLiteDatabase) {
     await database.execAsync(`
       ALTER TABLE auth_session ADD COLUMN equipe_guid TEXT;
       ALTER TABLE auth_session ADD COLUMN grupo_equipe_guid TEXT;
+    `);
+  }
+
+  if (currentVersion < 13) {
+    // Recria offline_form_drafts com identidade unica por preenchimento (id), em vez da
+    // antiga PK (record_guid, form_guid) — que so permitia UM rascunho por registro+formulario
+    // e fazia situacao de campo / preenchimentos sem base sobrescreverem uns aos outros.
+    // Linhas existentes recebem id deterministico "record_guid:form_guid".
+    await database.execAsync(`
+      CREATE TABLE offline_form_drafts_v13 (
+        id TEXT PRIMARY KEY NOT NULL,
+        record_guid TEXT NOT NULL,
+        form_guid TEXT NOT NULL,
+        values_json TEXT NOT NULL,
+        state_json TEXT,
+        dados_json TEXT,
+        status TEXT NOT NULL DEFAULT 'Preenchendo offline',
+        updated_at TEXT NOT NULL,
+        updated_at_ms INTEGER NOT NULL DEFAULT 0
+      );
+
+      INSERT INTO offline_form_drafts_v13
+        (id, record_guid, form_guid, values_json, state_json, dados_json, status, updated_at, updated_at_ms)
+      SELECT
+        record_guid || ':' || form_guid,
+        record_guid, form_guid, values_json, state_json, dados_json, status, updated_at, updated_at_ms
+      FROM offline_form_drafts;
+
+      DROP TABLE offline_form_drafts;
+      ALTER TABLE offline_form_drafts_v13 RENAME TO offline_form_drafts;
+
+      CREATE INDEX IF NOT EXISTS idx_offline_form_drafts_updated_at
+        ON offline_form_drafts(updated_at);
+      CREATE INDEX IF NOT EXISTS idx_offline_form_drafts_status_record
+        ON offline_form_drafts(status, record_guid);
+      CREATE INDEX IF NOT EXISTS idx_offline_form_drafts_record_form
+        ON offline_form_drafts(record_guid, form_guid);
+    `);
+  }
+
+  if (currentVersion < 14) {
+    // Coordenada do proprio preenchimento (latitude/longitude do topo do registro, fora de
+    // `dados`), capturada do GPS no momento da conclusao. Uma por preenchimento — formulario
+    // com/sem base e situacao de campo. Nao e global nem vem do campo mult_capturas.
+    await database.execAsync(`
+      ALTER TABLE offline_form_drafts ADD COLUMN latitude TEXT;
+      ALTER TABLE offline_form_drafts ADD COLUMN longitude TEXT;
     `);
   }
 

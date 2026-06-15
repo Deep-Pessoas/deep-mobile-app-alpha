@@ -8,7 +8,7 @@ const COPY_BATCH_SIZE = 3;
 
 export type PersistedFileResult = { ok: true; uri: string } | { ok: false; uri: null };
 
-function uuidv4() {
+export function uuidv4() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
     const random = (Math.random() * 16) | 0;
     const value = char === 'x' ? random : (random & 0x3) | 0x8;
@@ -32,33 +32,53 @@ function safeFileName(uri: string) {
  * Retorna um resultado por arquivo (sucesso/falha) em vez de rejeitar tudo na primeira falha:
  * assim, se 1 de 30 imagens falhar ao copiar, as outras 29 nao sao perdidas.
  */
-export async function persistDraftFiles(recordGuid: string, formGuid: string, fieldId: string, uris: string[]): Promise<PersistedFileResult[]> {
-  const directory = new Directory(Paths.document, 'form-drafts', recordGuid, formGuid, fieldId);
-  directory.create({ idempotent: true, intermediates: true });
+export async function persistDraftFiles(draftId: string, fieldId: string, uris: string[]): Promise<PersistedFileResult[]> {
+  console.log('[persistDraftFiles] inicio', { draftId, fieldId, uris });
+  const directory = new Directory(Paths.document, 'form-drafts', draftId, fieldId);
+  console.log('[persistDraftFiles] diretorio', { directoryUri: directory.uri });
+  try {
+    await directory.create({ idempotent: true, intermediates: true });
+    console.log('[persistDraftFiles] diretorio criado');
+  } catch (createErr) {
+    console.log('[persistDraftFiles] erro ao criar diretorio', { error: createErr });
+  }
 
   const results: PersistedFileResult[] = [];
 
   for (let start = 0; start < uris.length; start += COPY_BATCH_SIZE) {
     const batch = uris.slice(start, start + COPY_BATCH_SIZE);
+    console.log('[persistDraftFiles] processando batch', { start, size: batch.length });
     // eslint-disable-next-line no-await-in-loop
     const batchResults = await Promise.allSettled(batch.map(async (uri) => {
-      if (uri.startsWith(directory.uri)) return uri;
+      if (uri.startsWith(directory.uri)) {
+        console.log('[persistDraftFiles] uri ja esta no diretorio', { uri });
+        return uri;
+      }
 
       const source = new File(uri);
       const destination = new File(directory, safeFileName(uri));
-      await source.copy(destination);
-      return destination.uri;
+      console.log('[persistDraftFiles] copiando arquivo', { sourceUri: source.uri, destinationUri: destination.uri, sourceExists: source.exists });
+      try {
+        await source.copy(destination);
+        console.log('[persistDraftFiles] copia concluida', { destinationUri: destination.uri, destinationExists: destination.exists });
+        return destination.uri;
+      } catch (copyErr) {
+        console.log('[persistDraftFiles] erro na copia', { sourceUri: source.uri, error: copyErr });
+        throw copyErr;
+      }
     }));
 
-    batchResults.forEach((result) => {
+    batchResults.forEach((result, index) => {
       if (result.status === 'fulfilled') {
         results.push({ ok: true, uri: result.value });
       } else {
+        console.log('[persistDraftFiles] falha no batch', { index, reason: result.reason });
         results.push({ ok: false, uri: null });
       }
     });
   }
 
+  console.log('[persistDraftFiles] fim', { results });
   return results;
 }
 
@@ -75,9 +95,9 @@ export function deleteDraftFile(uri: string) {
  * Remove a pasta de arquivos de um rascunho (todas as imagens/documentos do preenchimento)
  * apos a sincronizacao ter sido confirmada com sucesso pela API.
  */
-export function deleteDraftDirectory(recordGuid: string, formGuid: string) {
+export function deleteDraftDirectory(draftId: string) {
   try {
-    const directory = new Directory(Paths.document, 'form-drafts', recordGuid, formGuid);
+    const directory = new Directory(Paths.document, 'form-drafts', draftId);
     if (directory.exists) directory.delete();
   } catch {
     // Limpeza de arquivos e best-effort: nao deve impedir a confirmacao do envio.

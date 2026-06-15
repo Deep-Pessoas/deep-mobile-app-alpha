@@ -3,6 +3,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { clearFillRecordDraft, saveFillRecordDraft } from '../services/fillRecordService';
+import type { Coordinates } from '../services/locationService';
 import type { FillRecordData, FillRecordLocalStatus, FormValues } from '../types/form';
 
 export type DraftSaveState = 'error' | 'idle' | 'saved' | 'saving';
@@ -12,7 +13,9 @@ type Params = {
   data: FillRecordData;
   database: SQLiteDatabase;
   draftData: FormValues;
+  draftId: string;
   draftPromptHandled: boolean;
+  enableDraft: boolean;
   isDirty: boolean;
   markSaved: () => void;
   onLocalStateSaved: (recordGuid: string, status: FillRecordLocalStatus) => void;
@@ -29,7 +32,9 @@ export function useDraftAutosave({
   data,
   database,
   draftData,
+  draftId,
   draftPromptHandled,
+  enableDraft,
   isDirty,
   markSaved,
   onLocalStateSaved,
@@ -70,20 +75,23 @@ export function useDraftAutosave({
     dados: FormValues,
     status: FillRecordLocalStatus,
     savedVersion = latestChangeVersion.current,
+    coords: Coordinates | null = null,
   ) => {
     const current = dataRef.current;
-    await saveFillRecordDraft(database, current.record.guid, current.form.guid, state, dados, status);
+    await saveFillRecordDraft(database, draftId, current.record.guid, current.form.guid, state, dados, status, coords);
     const isLatestVersion = latestChangeVersion.current === savedVersion;
     hasPendingChanges.current = !isLatestVersion;
     if (isLatestVersion) markSaved();
     onLocalStateSavedRef.current(current.record.guid, status);
     if (isLatestVersion) setSaveState('saved');
-  }, [database, markSaved]);
+  }, [database, draftId, markSaved]);
 
+  // Modo sem base (enableDraft=false) nao mantem rascunho: nada e salvo ao desmontar.
   useEffect(() => () => {
-    if (hasPendingChanges.current) {
+    if (enableDraft && hasPendingChanges.current) {
       saveFillRecordDraft(
         database,
+        draftId,
         dataRef.current.record.guid,
         dataRef.current.form.guid,
         latestValues.current,
@@ -91,11 +99,11 @@ export function useDraftAutosave({
         latestLocalStatus.current,
       ).then(() => onLocalStateSavedRef.current(dataRef.current.record.guid, latestLocalStatus.current)).catch(() => undefined);
     }
-  }, [database]);
+  }, [database, draftId, enableDraft]);
 
   const startFresh = useCallback(async () => {
     const current = dataRef.current;
-    const draftDirectory = new Directory(Paths.document, 'form-drafts', current.record.guid, current.form.guid);
+    const draftDirectory = new Directory(Paths.document, 'form-drafts', draftId);
     if (draftDirectory.exists) {
       try {
         draftDirectory.delete();
@@ -104,7 +112,7 @@ export function useDraftAutosave({
       }
     }
     try {
-      await clearFillRecordDraft(database, current.record.guid, current.form.guid);
+      await clearFillRecordDraft(database, draftId);
     } catch {
       // Database cleanup is best-effort; resetting the form is what matters here.
     }
@@ -112,7 +120,7 @@ export function useDraftAutosave({
     setLocalStatus('Rascunho');
     setSaveState('idle');
     onLocalStateSavedRef.current(current.record.guid, 'Rascunho');
-  }, [database, reset, setLocalStatus]);
+  }, [database, draftId, reset, setLocalStatus]);
 
   const draftPromptHandledRef = useRef(draftPromptHandled);
   useEffect(() => {
@@ -120,6 +128,7 @@ export function useDraftAutosave({
   });
 
   useEffect(() => {
+    if (!enableDraft) return;
     if (!draftPromptHandled) return;
     if (!isDirty) return;
     setSaveState('saving');
@@ -130,7 +139,7 @@ export function useDraftAutosave({
     }, 500);
 
     return () => clearTimeout(timeout);
-  }, [changeVersion, draftPromptHandled, isDirty, persistDraft]);
+  }, [changeVersion, draftPromptHandled, enableDraft, isDirty, persistDraft]);
 
   return { localStatus, persistDraft, saveState, setLocalStatus, startFresh };
 }
