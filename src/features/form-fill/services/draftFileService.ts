@@ -33,52 +33,32 @@ function safeFileName(uri: string) {
  * assim, se 1 de 30 imagens falhar ao copiar, as outras 29 nao sao perdidas.
  */
 export async function persistDraftFiles(draftId: string, fieldId: string, uris: string[]): Promise<PersistedFileResult[]> {
-  console.log('[persistDraftFiles] inicio', { draftId, fieldId, uris });
   const directory = new Directory(Paths.document, 'form-drafts', draftId, fieldId);
-  console.log('[persistDraftFiles] diretorio', { directoryUri: directory.uri });
-  try {
-    await directory.create({ idempotent: true, intermediates: true });
-    console.log('[persistDraftFiles] diretorio criado');
-  } catch (createErr) {
-    console.log('[persistDraftFiles] erro ao criar diretorio', { error: createErr });
-  }
+  await directory.create({ idempotent: true, intermediates: true });
 
   const results: PersistedFileResult[] = [];
 
   for (let start = 0; start < uris.length; start += COPY_BATCH_SIZE) {
     const batch = uris.slice(start, start + COPY_BATCH_SIZE);
-    console.log('[persistDraftFiles] processando batch', { start, size: batch.length });
     // eslint-disable-next-line no-await-in-loop
     const batchResults = await Promise.allSettled(batch.map(async (uri) => {
-      if (uri.startsWith(directory.uri)) {
-        console.log('[persistDraftFiles] uri ja esta no diretorio', { uri });
-        return uri;
-      }
+      if (uri.startsWith(directory.uri)) return uri;
 
       const source = new File(uri);
       const destination = new File(directory, safeFileName(uri));
-      console.log('[persistDraftFiles] copiando arquivo', { sourceUri: source.uri, destinationUri: destination.uri, sourceExists: source.exists });
-      try {
-        await source.copy(destination);
-        console.log('[persistDraftFiles] copia concluida', { destinationUri: destination.uri, destinationExists: destination.exists });
-        return destination.uri;
-      } catch (copyErr) {
-        console.log('[persistDraftFiles] erro na copia', { sourceUri: source.uri, error: copyErr });
-        throw copyErr;
-      }
+      await source.copy(destination);
+      return destination.uri;
     }));
 
-    batchResults.forEach((result, index) => {
+    batchResults.forEach((result) => {
       if (result.status === 'fulfilled') {
         results.push({ ok: true, uri: result.value });
       } else {
-        console.log('[persistDraftFiles] falha no batch', { index, reason: result.reason });
         results.push({ ok: false, uri: null });
       }
     });
   }
 
-  console.log('[persistDraftFiles] fim', { results });
   return results;
 }
 
