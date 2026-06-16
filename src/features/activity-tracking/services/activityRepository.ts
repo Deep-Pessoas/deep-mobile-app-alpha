@@ -12,6 +12,8 @@ export type ActivityInput = {
   tipo: ActivityType;
   registroGuid?: string | null;
   situacaoBackofficeGuid?: string | null;
+  registroNome?: string | null;
+  registroEndereco?: string | null;
   latitude?: string | null;
   longitude?: string | null;
   /** ISO do momento do evento. Default: agora. */
@@ -24,6 +26,8 @@ export type ActivityRow = {
   tipo: string;
   registro_guid: string | null;
   situacao_backoffice_guid: string | null;
+  registro_nome: string | null;
+  registro_endereco: string | null;
   latitude: string | null;
   longitude: string | null;
   ocorrido_em: string;
@@ -39,12 +43,14 @@ export async function logActivity(database: SQLiteDatabase, input: ActivityInput
     const now = new Date().toISOString();
     await database.runAsync(
       `INSERT INTO agente_atividades
-         (agente_guid, tipo, registro_guid, situacao_backoffice_guid, latitude, longitude, ocorrido_em, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (agente_guid, tipo, registro_guid, situacao_backoffice_guid, registro_nome, registro_endereco, latitude, longitude, ocorrido_em, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.agenteGuid,
       input.tipo,
       input.registroGuid ?? null,
       input.situacaoBackofficeGuid ?? null,
+      input.registroNome ?? null,
+      input.registroEndereco ?? null,
       input.latitude ?? null,
       input.longitude ?? null,
       input.ocorridoEm ?? now,

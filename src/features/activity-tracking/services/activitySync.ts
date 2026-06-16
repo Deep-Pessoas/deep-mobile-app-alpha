@@ -17,6 +17,8 @@ function toPayloadItem(row: ActivityRow) {
     tipo: row.tipo,
     registro_guid: row.registro_guid,
     situacao_backoffice_guid: row.situacao_backoffice_guid,
+    registro_nome: row.registro_nome,
+    registro_endereco: row.registro_endereco,
     latitude: row.latitude,
     longitude: row.longitude,
     ocorrido_em: row.ocorrido_em,

@@ -4,17 +4,31 @@ import { logActivity } from './activityRepository';
 import type { Coordinates } from '../../form-fill/services/locationService';
 import { getTrackingCoordinates } from '../../form-fill/services/locationService';
 
-// Le a situacao de backoffice atual do registro (no momento do evento). Registros sem base
-// (BASELESS_GUID) e sinteticos simplesmente nao constam — retorna null.
-async function readRecordStatus(database: SQLiteDatabase, recordGuid: string): Promise<string | null> {
+type RecordInfo = {
+  situacaoBackofficeGuid: string | null;
+  registroNome: string | null;
+  registroEndereco: string | null;
+};
+
+// Snapshot do registro no momento do evento: situacao de backoffice, nome e endereco. O modo
+// sem base usa um registro sintetico (nome "Preenchimento sem base", endereco/situacao null).
+async function readRecordInfo(database: SQLiteDatabase, recordGuid: string): Promise<RecordInfo> {
   try {
-    const row = await database.getFirstAsync<{ backoffice_status_guid: string | null }>(
-      'SELECT backoffice_status_guid FROM offline_records WHERE guid = ?',
+    const row = await database.getFirstAsync<{
+      backoffice_status_guid: string | null;
+      name: string | null;
+      address: string | null;
+    }>(
+      'SELECT backoffice_status_guid, name, address FROM offline_records WHERE guid = ?',
       recordGuid,
     );
-    return row?.backoffice_status_guid ?? null;
+    return {
+      situacaoBackofficeGuid: row?.backoffice_status_guid ?? null,
+      registroNome: row?.name ?? null,
+      registroEndereco: row?.address ?? null,
+    };
   } catch {
-    return null;
+    return { situacaoBackofficeGuid: null, registroNome: null, registroEndereco: null };
   }
 }
 
@@ -30,17 +44,19 @@ export async function logFormReceived(database: SQLiteDatabase, agentGuid: strin
   await logActivity(database, { agenteGuid: agentGuid, tipo: 'formulario_recebido' });
 }
 
-/** registro_primeira_abertura: clique em "Preencher" — data/hora, coordenadas e situacao atual. */
+/** registro_primeira_abertura: clique em "Preencher" — data/hora, coordenadas e snapshot do registro. */
 export async function logRecordOpen(database: SQLiteDatabase, agentGuid: string, recordGuid: string): Promise<void> {
-  const [coords, situacao] = await Promise.all([
+  const [coords, info] = await Promise.all([
     getTrackingCoordinates(),
-    readRecordStatus(database, recordGuid),
+    readRecordInfo(database, recordGuid),
   ]);
   await logActivity(database, {
     agenteGuid: agentGuid,
     tipo: 'abertura_registro',
     registroGuid: recordGuid,
-    situacaoBackofficeGuid: situacao,
+    situacaoBackofficeGuid: info.situacaoBackofficeGuid,
+    registroNome: info.registroNome,
+    registroEndereco: info.registroEndereco,
     latitude: coords?.latitude ?? null,
     longitude: coords?.longitude ?? null,
   });
@@ -56,12 +72,14 @@ export async function logRecordClose(
   recordGuid: string,
   coords: Coordinates | null,
 ): Promise<void> {
-  const situacao = await readRecordStatus(database, recordGuid);
+  const info = await readRecordInfo(database, recordGuid);
   await logActivity(database, {
     agenteGuid: agentGuid,
     tipo: 'encerramento_registro',
     registroGuid: recordGuid,
-    situacaoBackofficeGuid: situacao,
+    situacaoBackofficeGuid: info.situacaoBackofficeGuid,
+    registroNome: info.registroNome,
+    registroEndereco: info.registroEndereco,
     latitude: coords?.latitude ?? null,
     longitude: coords?.longitude ?? null,
   });

@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 16;
+const DATABASE_VERSION = 17;
 
 async function ensureRecordsSearchTriggers(database: SQLiteDatabase) {
   await database.execAsync(`
@@ -394,6 +394,16 @@ export async function migrateDatabase(database: SQLiteDatabase) {
         last_hour_bucket TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+    `);
+  }
+
+  if (currentVersion < 17) {
+    // Nome e endereco do registro no momento do evento (eventos de registro). Snapshot — evita
+    // depender de um JOIN no envio e preserva o valor mesmo se o registro mudar/sair do banco.
+    // Nomes alinhados com a API (registro_nome / registro_endereco) de ponta a ponta.
+    await database.execAsync(`
+      ALTER TABLE agente_atividades ADD COLUMN registro_nome TEXT;
+      ALTER TABLE agente_atividades ADD COLUMN registro_endereco TEXT;
     `);
   }
 
