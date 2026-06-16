@@ -253,6 +253,10 @@ export async function clearAllOfflineData(database: SQLiteDatabase, agentGuid: s
   await database.runAsync('DELETE FROM offline_situacoes_backoffice');
   await database.runAsync('DELETE FROM agent_profiles');
   await database.runAsync('DELETE FROM offline_sync_state WHERE agent_guid = ?', agentGuid);
+  // Atividades de monitoramento pendentes + marcador de rastreamento horario deste agente.
+  // NAO toca em device_identity (codigo da instalacao), que deve sobreviver ao logout.
+  await database.runAsync('DELETE FROM agente_atividades WHERE agente_guid = ?', agentGuid);
+  await database.runAsync('DELETE FROM tracking_state WHERE agente_guid = ?', agentGuid);
 }
 
 export async function getPendingDraftsCount(database: SQLiteDatabase): Promise<number> {

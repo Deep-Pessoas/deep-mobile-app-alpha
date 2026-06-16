@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 14;
+const DATABASE_VERSION = 16;
 
 async function ensureRecordsSearchTriggers(database: SQLiteDatabase) {
   await database.execAsync(`
@@ -344,6 +344,56 @@ export async function migrateDatabase(database: SQLiteDatabase) {
     await database.execAsync(`
       ALTER TABLE offline_form_drafts ADD COLUMN latitude TEXT;
       ALTER TABLE offline_form_drafts ADD COLUMN longitude TEXT;
+    `);
+  }
+
+  if (currentVersion < 15) {
+    // Identidade unica desta INSTALACAO do app. Persistida no banco local: sobrevive ao uso
+    // normal (e ao "limpar cache", que nao apaga o DB), mas e recriada quando o usuario limpa
+    // os DADOS do app ou reinstala — gerando um novo codigo, exatamente como pedido. Enviada
+    // no body do /auth/login (campo mobile_app_device_id). NUNCA e apagada no logout.
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS device_identity (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        device_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Fila local de atividades do agente para monitoramento (login, formulario recebido,
+    // abertura/encerramento de registro e rastreamento de coordenadas). Tudo e gravado aqui de
+    // forma fire-and-forget para nao impactar a fluidez do app e enviado em UMA requisicao na
+    // tela de Sincronizacao (POST /agente-ativdades-mobile); ao receber code=200, as linhas
+    // enviadas sao apagadas.
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS agente_atividades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agente_guid TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        registro_guid TEXT,
+        situacao_backoffice_guid TEXT,
+        latitude TEXT,
+        longitude TEXT,
+        ocorrido_em TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agente_atividades_agente
+        ON agente_atividades(agente_guid, id);
+    `);
+  }
+
+  if (currentVersion < 16) {
+    // Marcador persistente do ultimo "balde de hora" (YYYY-MM-DDTHH) ja capturado no
+    // rastreamento, por agente. Sobrevive ao esvaziamento da fila de atividades (que apaga as
+    // linhas no envio) e a reinicios do app — garantindo no maximo UMA captura por hora
+    // (teto de 24 linhas/dia), em vez de uma a cada minuto.
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS tracking_state (
+        agente_guid TEXT PRIMARY KEY NOT NULL,
+        last_hour_bucket TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 

@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { apiClient } from '../../../shared/api/apiClient';
 import { useAuth } from '../../auth/context/AuthContext';
+import { logFormReceived } from '../../activity-tracking/services/activityLogger';
 import { getSummaryData, isOfflineDataReady } from '../services/offlineQueries';
 import { prepareOfflineData } from '../services/offlineSync';
 import type { PreparationProgress, PreparationStep, SummaryData } from '../types/offline';
@@ -94,6 +95,10 @@ export function OfflinePreparationScreen({ forceFullRefresh = false, onAdvance }
 
       const data = await getSummaryData(database, session.agent.guid);
       setSummary(data);
+
+      // Monitoramento (fire-and-forget): carimbo de quando o agente recebeu o formulario.
+      // Sem await para nao atrasar a tela.
+      void logFormReceived(database, session.agent.guid);
       await new Promise((resolve) => setTimeout(resolve, 400));
       setShowSummary(true);
     } catch (error) {

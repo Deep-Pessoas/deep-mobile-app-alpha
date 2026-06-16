@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useNetwork } from '../../../shared/context/NetworkContext';
 import { CheckIcon, ErrorIcon, RefreshIcon } from '../../../shared/components/Icon';
+import { flushActivities } from '../../activity-tracking/services/activitySync';
 import { getSyncableDrafts, syncAll } from '../services/syncService';
 import type { SyncableDraft, SyncResult } from '../types/sync';
 
@@ -107,6 +108,11 @@ export function SyncScreen() {
     setFailureCount(0);
     setProgress({ completed: 0, total: drafts.length });
     progressWidth.setValue(0);
+
+    // Primeira requisicao: monta todas as atividades num array e envia (POST
+    // /agente-ativdades-mobile). Ao receber code=200, as linhas sao apagadas do banco. Depois
+    // segue o fluxo normal de envio dos preenchimentos. Best-effort: nao bloqueia o sync.
+    await flushActivities(database, session.agent.guid);
 
     const results = await syncAll(
       database,

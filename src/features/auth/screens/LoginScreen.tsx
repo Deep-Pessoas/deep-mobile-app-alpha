@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSQLiteContext } from 'expo-sqlite';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PasswordDefinedModal } from '../components/PasswordDefinedModal';
@@ -23,9 +24,13 @@ import { useAuthLayout } from '../utils/useAuthLayout';
 import { getErrorMessage } from '../../../shared/utils/getErrorMessage';
 import { formatCpf } from '../../../shared/utils/formatCpf';
 import { registerForPushNotifications } from '../../../shared/notifications/notificationService';
+import { getOrCreateDeviceId } from '../../../shared/device/deviceIdentity';
+import { logLogin } from '../../activity-tracking/services/activityLogger';
+import { ensureLocationPermission } from '../../form-fill/services/locationService';
 
 export function LoginScreen() {
   const { contentWidth, insets } = useAuthLayout();
+  const database = useSQLiteContext();
   const { signIn } = useAuth();
   const [step, setStep] = useState<AuthStep>('cpf');
   const [cpf, setCpf] = useState('');
@@ -116,7 +121,21 @@ export function LoginScreen() {
         Alert.alert('Debug push token', getErrorMessage(pushError, 'Falha desconhecida ao registrar push.'));
       }
 
-      const session = await login({ cpf, senha: password, mobile_app_push_code_user: pushToken });
+      // Pede a permissao de localizacao ja no login (best-effort) para que o monitoramento
+      // (abertura de registro e rastreamento) sempre tenha coordenadas. O login nunca pode ser
+      // bloqueado por isso — se for negada, as atividades apenas seguem sem lat/long.
+      void ensureLocationPermission();
+
+      // Codigo unico desta instalacao (cache em memoria; leitura/insercao instantanea no banco).
+      // Enviado no body do login para o backend monitorar o dispositivo.
+      const deviceId = await getOrCreateDeviceId(database);
+
+      const session = await login({
+        cpf,
+        senha: password,
+        mobile_app_push_code_user: pushToken,
+        mobile_app_device_id: deviceId,
+      });
 
       // Login returns equipe but NOT grupo. If the user has a team, fetch
       // group membership before signIn so AppNavigator has complete data.
@@ -133,6 +152,10 @@ export function LoginScreen() {
         }
       }
       await signIn(session);
+
+      // Monitoramento (fire-and-forget): momento do login. Nunca pode atrasar nem bloquear a
+      // entrada — por isso sem await.
+      void logLogin(database, session.agent.guid);
     } catch (error) {
       setErrorMessage(
         getErrorMessage(

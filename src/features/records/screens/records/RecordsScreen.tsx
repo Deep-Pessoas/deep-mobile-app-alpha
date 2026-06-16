@@ -1,10 +1,13 @@
 import { useIsFocused } from '@react-navigation/native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, Pressable, Text, View } from 'react-native';
+import { useSQLiteContext } from 'expo-sqlite';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useRecordsNavigation } from '../../../../navigation/hooks';
 import { useRecordsListContext } from '../../../../navigation/RecordsListContext';
+import { useAuth } from '../../../auth/context/AuthContext';
+import { logRecordOpen } from '../../../activity-tracking/services/activityLogger';
 import { ClipboardIcon, PlusIcon } from '../../../../shared/components/Icon';
 import type { RecordCard } from '../../../consolidated-data/types/offline';
 import type { FillRecordLocalStatus } from '../../../form-fill/types/form';
@@ -25,6 +28,8 @@ type Props = {
 export function RecordsScreen() {
   const isFocused = useIsFocused();
   const navigation = useRecordsNavigation();
+  const database = useSQLiteContext();
+  const { session } = useAuth();
   const { localState } = useRecordsListContext();
   const {
     activeFilterLabel,
@@ -48,8 +53,14 @@ export function RecordsScreen() {
   const scrollOffset = useRef(0);
 
   const openRecord = useCallback(
-    (recordGuid: string) => navigation.navigate('Fill', { recordGuid }),
-    [navigation],
+    (recordGuid: string) => {
+      // Navega imediatamente; o monitoramento de abertura roda em background (coordenadas via
+      // ultima posicao conhecida) para nao adicionar latencia ao toque em "Preencher".
+      navigation.navigate('Fill', { recordGuid });
+      const agentGuid = session?.agent.guid;
+      if (agentGuid) void logRecordOpen(database, agentGuid, recordGuid);
+    },
+    [navigation, database, session],
   );
   const insets = useSafeAreaInsets();
 

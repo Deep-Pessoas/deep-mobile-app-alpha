@@ -2,6 +2,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useCallback, useMemo, useState } from 'react';
 import type { NavigationState, PartialState } from '@react-navigation/native';
 
+import { LocationTracker } from '../features/activity-tracking/components/LocationTracker';
 import { HomeScreen } from '../features/home/screens/HomeScreen';
 import { OverviewScreen } from '../features/overview/screens/OverviewScreen';
 import { SyncScreen } from '../features/sync/screens/SyncScreen';
@@ -75,6 +76,7 @@ export function AppStackNavigator() {
         <AppStack.Screen component={TeamScreen} name="Team" />
         <AppStack.Screen component={RecordsNavigator} name="Records" />
       </AppStack.Navigator>
+      <LocationTracker />
     </AppShell>
   );
 }

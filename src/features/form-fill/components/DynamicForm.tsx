@@ -20,6 +20,8 @@ import { findFieldLabel } from '../utils/findFieldLabel';
 import type { FillRecordData, FillRecordLocalStatus, FormValue } from '../types/form';
 import { AlertModal } from '../../../shared/components/AlertModal';
 import { ErrorBoundary } from '../../../shared/components/ErrorBoundary';
+import { useAuth } from '../../auth/context/AuthContext';
+import { logRecordClose } from '../../activity-tracking/services/activityLogger';
 
 type Props = {
   data: FillRecordData;
@@ -30,6 +32,7 @@ type Props = {
 export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
   const database = useSQLiteContext();
   const insets = useSafeAreaInsets();
+  const { session } = useAuth();
 
   const reprovadosMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -172,6 +175,12 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
           title: 'Falha ao salvar',
         });
         return;
+      }
+
+      // Monitoramento (fire-and-forget): encerramento do registro com as mesmas coordenadas
+      // capturadas na conclusao. Sem await para nao atrasar a confirmacao ao usuario.
+      if (session?.agent.guid) {
+        void logRecordClose(database, session.agent.guid, data.record.guid, coordinates);
       }
 
       setAlertState({

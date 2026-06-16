@@ -30,6 +30,9 @@ export type LoginInput = {
   // Opcional: pode ser null quando o registro de push falha (Expo Go, sem permissao,
   // emulador) — o login NUNCA deve ser bloqueado por isso.
   mobile_app_push_code_user?: string | null;
+  // Codigo unico desta instalacao do app (ver shared/device/deviceIdentity). Estavel no uso
+  // normal; muda quando o usuario limpa os dados/reinstala (ou primeira instalacao).
+  mobile_app_device_id?: string | null;
 };
 
 export type LoginResponse = {

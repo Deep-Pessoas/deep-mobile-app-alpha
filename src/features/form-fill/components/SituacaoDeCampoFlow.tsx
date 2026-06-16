@@ -8,6 +8,8 @@ import { deleteDraftDirectory, persistDraftFiles, uuidv4 } from '../services/dra
 import { saveSituacaoDeCampo } from '../services/fillRecordService';
 import { getCurrentCoordinates } from '../services/locationService';
 import type { FillRecordLocalStatus } from '../types/form';
+import { useAuth } from '../../auth/context/AuthContext';
+import { logRecordClose } from '../../activity-tracking/services/activityLogger';
 
 type Situacao = {
   guid: string;
@@ -26,6 +28,7 @@ type Props = {
 
 export function SituacaoDeCampoFlow({ formGuid, onBack, onLocalStateSaved, recordGuid }: Props) {
   const database = useSQLiteContext();
+  const { session } = useAuth();
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
   const [situacoes, setSituacoes] = useState<Situacao[]>([]);
@@ -91,6 +94,13 @@ export function SituacaoDeCampoFlow({ formGuid, onBack, onLocalStateSaved, recor
       }
       await saveSituacaoDeCampo(database, draftIdRef.current, recordGuid, formGuid, { guid: selected.guid, titulo: selected.nome }, photoUri, coordinates);
       savedRef.current = true;
+
+      // Monitoramento (fire-and-forget): encerramento do registro via situacao de campo,
+      // com as coordenadas ja capturadas para o salvamento.
+      if (session?.agent.guid) {
+        void logRecordClose(database, session.agent.guid, recordGuid, coordinates);
+      }
+
       onLocalStateSaved(recordGuid, 'Preenchendo offline');
       setPhase('saved');
     } catch {
