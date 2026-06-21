@@ -1,4 +1,3 @@
-import { File } from 'expo-file-system';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { apiClient } from '../../../shared/api/apiClient';
@@ -43,8 +42,9 @@ type SyncApiResponse = {
   };
 };
 
-// Envio de imagens em base64 pode gerar payloads grandes (varias imagens por preenchimento).
-// Usa o mesmo timeout generoso aplicado a outras chamadas pesadas da API.
+// Upload de anexos agora e via multipart/form-data, streamado direto do disco (nunca base64
+// nem bufferizado inteiro em memoria) — timeout generoso porque o tempo de upload ainda escala
+// com o tamanho/quantidade de arquivos, mesmo sem o overhead de memoria do base64.
 const SYNC_TIMEOUT_MS = 300000;
 
 function parseJsonObject(rawJson: string | null | undefined): Record<string, unknown> {
@@ -90,39 +90,38 @@ function asStringArray(value: FormValue | undefined): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
+type UploadFileRef = { uri: string; name: string; type: string };
+type UploadFieldFiles = { field_id: string; files: UploadFileRef[] };
+
 /**
- * Converte os arquivos de campos "upload" para base64, mantendo o nome de arquivo
- * que ja esta presente em `dados[field_id]` (o mesmo que sera enviado no corpo "dados").
- *
- * Os arquivos sao lidos um de cada vez (sequencial) para evitar picos de memoria quando
- * existem dezenas de imagens em um unico preenchimento.
+ * Resolve os arquivos dos campos "upload" para referencias {uri, name, type} prontas pra
+ * multipart/form-data — nunca le o conteudo do arquivo nem gera base64. O arquivo e
+ * streamado direto do disco pela camada nativa quando a requisicao e enviada.
  */
-async function buildUploads(uploadFields: DynamicField[], dados: FormValues, stateValues: FormValues) {
-  const uploads: { field_id: string; urls: string[] }[] = [];
+function buildUploadFileRefs(uploadFields: DynamicField[], dados: FormValues, stateValues: FormValues): UploadFieldFiles[] {
+  const uploads: UploadFieldFiles[] = [];
 
   for (const field of uploadFields) {
     const fileNames = asStringArray(dados[field.id]);
     if (fileNames.length === 0) continue;
 
     const uris = asStringArray(stateValues[field.id]);
-    const urls: string[] = [];
+    const files: UploadFileRef[] = [];
 
-    // Tudo-ou-nada por preenchimento: cada nome em `dados[field]` precisa ter o seu base64
-    // na MESMA posicao em `urls` (o servidor casa por field_id + indice). Se um arquivo
-    // referenciado nao existir/nao puder ser lido, falha o preenchimento inteiro (mantido
-    // para reenvio) em vez de enviar uma lista parcial e desalinhada — o que apagaria o
-    // rascunho com dado faltando (falso positivo).
+    // Tudo-ou-nada por preenchimento: cada nome em `dados[field]` precisa ter seu arquivo
+    // na MESMA posicao em `uris`. Se um arquivo referenciado nao existir, falha o
+    // preenchimento inteiro (mantido para reenvio) em vez de enviar uma lista parcial e
+    // desalinhada — o que apagaria o rascunho com dado faltando (falso positivo).
     for (let index = 0; index < fileNames.length; index += 1) {
       const uri = uris[index];
       if (!uri) {
         throw new Error(`Arquivo "${fileNames[index]}" do campo ${field.id} nao foi encontrado para envio.`);
       }
-      const base64 = await new File(uri).base64();
-      urls.push(`data:${inferMimeType(fileNames[index])};base64,${base64}`);
+      files.push({ uri, name: fileNames[index], type: inferMimeType(fileNames[index]) });
     }
 
-    if (urls.length > 0) {
-      uploads.push({ field_id: field.id, urls });
+    if (files.length > 0) {
+      uploads.push({ field_id: field.id, files });
     }
   }
 
@@ -249,7 +248,7 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
 
     const uploadFields = collectFieldsByType(fields, ['upload']);
 
-    const uploads = await buildUploads(uploadFields, dados, stateValues);
+    const uploads = buildUploadFileRefs(uploadFields, dados, stateValues);
 
     // Situação de Campo: o "campo" da foto e identificado pelo GUID da situacao selecionada
     // (mesma chave usada em dados[guid] e em situacao_campo_id) — nao por um literal "foto".
@@ -261,10 +260,7 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
     if (situacaoFotoUris.length > 0 && situacaoCampoId) {
       const uri = situacaoFotoUris[0];
       const fileName = uri.split('/').pop() ?? 'foto.jpg';
-      // Mesma regra tudo-ou-nada: se a foto da situacao foi registrada mas nao pode ser lida,
-      // falha o envio (mantem o rascunho) em vez de enviar a situacao sem a foto.
-      const base64 = await new File(uri).base64();
-      uploads.push({ field_id: situacaoCampoId, urls: [`data:${inferMimeType(fileName)};base64,${base64}`] });
+      uploads.push({ field_id: situacaoCampoId, files: [{ uri, name: fileName, type: inferMimeType(fileName) }] });
     }
 
     // Coordenada do proprio preenchimento (capturada na conclusao). Nenhum preenchimento pode
@@ -275,14 +271,13 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
       return failure('Este preenchimento não possui localização (latitude/longitude). Refaça o preenchimento com o GPS ativo.');
     }
 
-    const payload = {
+    const payloadJson = {
       contrato_id: agentProfile.contract_guid,
       base_dados_guid: baseDadosGuid,
       equipe_id: agentProfile.team_guid,
       agente_id: agentProfile.guid,
       form_id: draft.formGuid,
       dados,
-      uploads,
       latitude,
       longitude,
       registro_campo_guid: '',
@@ -292,7 +287,26 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
       ...(situacaoCampoId ? { created_at: draftRow.updated_at } : {}),
     };
 
-    const response = await apiClient.post<SyncApiResponse>('/campo-visitas/registro', payload, { timeout: SYNC_TIMEOUT_MS });
+    // multipart/form-data: campo de texto "payload" (JSON sem os arquivos) + um arquivo por
+    // imagem, streamado direto do disco pela camada nativa — nunca base64, nunca bufferizado
+    // inteiro em memoria. "payload" precisa ser o primeiro campo (a API espera os metadados
+    // antes dos arquivos pra saber a quem cada imagem pertence).
+    const formData = new FormData();
+    formData.append('payload', JSON.stringify(payloadJson));
+    for (const upload of uploads) {
+      for (const file of upload.files) {
+        formData.append(upload.field_id, {
+          uri: file.uri,
+          name: file.name,
+          type: file.type,
+        } as unknown as Blob);
+      }
+    }
+
+    const response = await apiClient.post<SyncApiResponse>('/campo-visitas/registro', formData, {
+      timeout: SYNC_TIMEOUT_MS,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
 
     // Sucesso apenas quando a API retorna exatamente: { codigo: 200, status: "sucesso", ... }
     const isSyncSuccess = response.data?.codigo === 200 && response.data?.status === 'sucesso';
