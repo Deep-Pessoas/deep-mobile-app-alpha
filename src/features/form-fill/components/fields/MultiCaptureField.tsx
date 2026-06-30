@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native';
 
 import { CheckIcon, LocationIcon, RefreshIcon, TrashIcon } from '../../../../shared/components/Icon';
+import { withTimeout } from '../../services/locationService';
 import type { DynamicField, FormValue } from '../../types/form';
 import { FieldContainer } from './FieldContainer';
 
@@ -43,7 +44,15 @@ export function MultiCaptureField({ error, field, onChange, value }: Props) {
         return;
       }
 
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      // Timeout defensivo (igual a conclusao do preenchimento): GPS travado nao pode deixar a
+      // captura presa para sempre, bloqueando tambem as demais capturas pelo guard `busyId`.
+      const position =
+        (await withTimeout(Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }), 15000)) ??
+        (await Location.getLastKnownPositionAsync());
+      if (!position) {
+        Alert.alert('Falha na captura', 'Nao foi possivel obter a localizacao atual. Verifique o GPS e tente novamente.');
+        return;
+      }
       const next = values.filter((item) => item.id !== captureId);
       next.push({
         id: captureId,

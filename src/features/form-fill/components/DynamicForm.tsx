@@ -1,6 +1,6 @@
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DynamicFieldRenderer } from './DynamicFieldRenderer';
@@ -62,6 +62,7 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
     variant?: 'default' | 'success';
   } | null>(null);
   const [draftPromptHandled, setDraftPromptHandled] = useState(!data.hasDraft);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [missingFields, setMissingFields] = useState<{ id: string; label: string }[]>([]);
   const scrollViewRef = useRef<ScrollView>(null);
   const scrollY = useRef(0);
@@ -128,7 +129,9 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
   }, [data.hasDraft, draftPromptHandled, startFresh]);
 
   const submit = async () => {
-    if (!draftPromptHandled) return;
+    // Guard de reentrancia: a captura de GPS pode demorar; sem isto, multiplos toques em
+    // "Concluir" disparavam varios envios e eventos de encerramento duplicados.
+    if (!draftPromptHandled || isSubmitting) return;
     const validation = validate();
     if (!validation.isValid) {
       const fieldList = Object.keys(validation.errors).map((id) => ({
@@ -144,6 +147,7 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       // Coordenada do proprio preenchimento (latitude/longitude do topo do registro), capturada
       // do GPS agora, na conclusao. Toda conclusao precisa dela — nenhum preenchimento pode ser
@@ -199,6 +203,8 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
         description: 'Nao foi possivel salvar o preenchimento offline.',
         title: 'Falha ao salvar',
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -265,10 +271,14 @@ export function DynamicForm({ data, onBack, onLocalStateSaved }: Props) {
 
           <View className="mt-2">
             <Pressable
-              className="min-h-14 items-center justify-center rounded-2xl bg-primary-500 px-4 active:bg-primary-600"
+              className="min-h-14 flex-row items-center justify-center gap-2 rounded-2xl bg-primary-500 px-4 active:bg-primary-600 disabled:opacity-60"
+              disabled={isSubmitting}
               onPress={submit}
             >
-              <Text className="text-base font-semibold text-white">Concluir preenchimento offline</Text>
+              {isSubmitting ? <ActivityIndicator color="#ffffff" size="small" /> : null}
+              <Text className="text-base font-semibold text-white">
+                {isSubmitting ? 'Concluindo...' : 'Concluir preenchimento offline'}
+              </Text>
             </Pressable>
           </View>
         </ScrollView>

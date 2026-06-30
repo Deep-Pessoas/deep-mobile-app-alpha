@@ -4,7 +4,7 @@
 >
 > **Escopo:** leitura integral de `src/` (103 arquivos TS/TSX, ~10,1k linhas) + configuração (`App.tsx`, `app.json`, `app.config.ts`, migrações de banco).
 > **Data:** 2026-06-16 · **Plataforma:** Android (Expo SDK 56, React Native 0.85, React 19) · **Persistência:** SQLite (expo-sqlite, WAL) · **Rede:** axios + react-query.
-> **Importante:** este documento é **somente análise** — nenhum código foi alterado.
+> **Importante:** a revisão original era somente análise. **As correções foram implementadas em 2026-06-16** — ver [Status de implementação](#status-de-implementação) e o [Anexo A](#anexo-a--proposta-de-endpoint-multipartform-data-para-a-api) com a proposta de endpoint para a API.
 
 ---
 
@@ -21,6 +21,26 @@ Porém, no caminho de **alto volume de mídia** (o que mais importa aqui) existe
 5. **Migração de banco pode "tijolar" o app** no cold start se falhar no meio (§H5).
 
 A seção [Plano de ação priorizado](#plano-de-ação-priorizado) no fim resume a ordem recomendada.
+
+---
+
+## Status de implementação
+
+> Atualizado em **2026-06-16** — correções aplicadas no app (lado cliente) e validadas com `npm run typecheck`.
+
+**Aplicado ✅:** H2, H3, H4, H5, M1, M2, M3, M4, M5, M6, M8 e L7 (mensagens de erro mais precisas, reauth enviando `device_id`, comentário do tracker corrigido, guard de unmount no carregamento do formulário).
+
+**Aplicado parcialmente ⚠️:**
+- **H1** — trava de segurança contra OOM no cliente (`MAX_TOTAL_UPLOAD_BYTES = 35 MB` em `syncService.ts`): converte o crash em uma falha tratada (mantém o rascunho). A correção **definitiva** depende do endpoint **multipart/form-data** na API — ver [Anexo A](#anexo-a--proposta-de-endpoint-multipartform-data-para-a-api).
+- **M7** — as strings de fio (`rastreiamento`, `/agente-ativdades-mobile`) foram **mantidas** por serem contrato com o backend; apenas documentadas no código. Corrigir a grafia exige mudança coordenada nos dois lados.
+
+**Adiado (com justificativa) ⏭️:**
+- **L1** (O(N²) em forms grandes) — aceitável hoje; só compensa otimizar se os formulários crescerem muito.
+- **L2** (assinatura → arquivo) — refactor que toca o armazenamento da assinatura + envio + regra tudo-ou-nada; melhor fazer junto com o multipart (Anexo A).
+- **L3** (download paginado) — depende de paginação na API.
+- **L4** (cancelar sync/preparação) — feature de UI (AbortController) a planejar.
+- **L5** (token no SecureStore) — exige nova dependência (`expo-secure-store`) e migração do storage de sessão.
+- **L6** (rastrear promise rejection) — **não aplicado de propósito:** gravaria rejeições não-fatais no mesmo arquivo de crash, fazendo o aviso "o app fechou inesperadamente" aparecer para erros que não fecharam o app. Melhor tratar com um canal de log separado.
 
 ---
 
@@ -249,6 +269,38 @@ Como o foco é **volume de dados gerado/recebido**, vale consolidar os pontos es
 
 **Quando houver folga (qualidade/escala):**
 10. **L1–L7** — performance de forms grandes, assinatura como arquivo, paginação do download, SecureStore para token, ativar promise-rejection tracker e limpezas menores.
+
+---
+
+---
+
+## Anexo A — Proposta de endpoint multipart/form-data (para a API)
+
+Hoje o envio de preenchimentos (`POST /campo-visitas/registro`) recebe **todos os anexos em base64 dentro de um JSON único**. É isso que gera o risco de OOM (§H1): o app mantém todas as imagens em memória, em base64 (~+33%), e o axios ainda duplica ao serializar o corpo. O cliente já tem a trava temporária `MAX_TOTAL_UPLOAD_BYTES` (35 MB) que bloqueia envios grandes em vez de crashar — mas a correção real é **trocar para `multipart/form-data`**, enviando os arquivos como binário em streaming, sem carregar tudo em memória.
+
+### Endpoint proposto
+
+`POST /campo-visitas/registro` aceitando `Content-Type: multipart/form-data` com as partes:
+
+| Parte (campo) | Tipo | Descrição |
+|---|---|---|
+| `payload` | texto (JSON) | O mesmo objeto de hoje, **sem** o array `uploads` e **sem** a assinatura base64: `contrato_id`, `base_dados_guid`, `equipe_id`, `agente_id`, `form_id`, `dados`, `latitude`, `longitude`, `registro_campo_guid`, `form_base_dados`, `situacao_campo_id`, `created_at`. |
+| `file_<field_id>_<index>` | binário | Cada arquivo de um campo `upload`. `field_id` = id do campo; `index` = posição (0-based). O servidor casa por `field_id` + índice, igual a hoje. O `filename` da parte = o nome único (UUID) já presente em `dados[field_id][index]`. |
+| `file_<situacao_guid>_0` | binário | Foto da Situação de Campo (quando houver), com `situacao_guid` = `situacao_campo_id`. |
+| `signature_<field_id>` | binário (PNG) | Assinatura como arquivo, em vez de base64 inline em `dados`. |
+
+### Regras (preservar as garantias atuais)
+- **Sucesso:** continuar retornando `{ codigo: 200, status: "sucesso", ... }` — o cliente só apaga o rascunho/arquivos nesse caso.
+- **Tudo-ou-nada:** se qualquer arquivo referenciado em `dados` não chegar, rejeitar o preenchimento inteiro (não persistir parcial). O cliente mantém o rascunho para reenvio.
+- **Idempotência:** um reenvio (resposta perdida) não deve duplicar. Hoje não há chave de idempotência no envio de preenchimento — considerar aceitar um `client_draft_id` para dedup (análogo ao `client_id` das atividades).
+- **Limites:** definir limite por arquivo e total no servidor (ex.: 10 MB/arquivo) e responder erro claro — o cliente já valida 10 MB/arquivo na captura.
+
+### O que muda no app quando o endpoint existir
+- `buildUploads` deixa de gerar base64 e passa a anexar `FormData` com os `uri` (o RN faz streaming do arquivo, sem carregar em JS).
+- A assinatura passa a ser salva como arquivo (resolve §L2 de quebra).
+- A trava `MAX_TOTAL_UPLOAD_BYTES` pode ser removida (ou muito elevada).
+
+> O lado do app é uma troca localizada em `syncService.ts` — posso implementar assim que o endpoint estiver disponível.
 
 ---
 

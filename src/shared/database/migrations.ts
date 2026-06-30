@@ -49,6 +49,13 @@ export async function migrateDatabase(database: SQLiteDatabase) {
     return;
   }
 
+  // Todas as etapas de migracao rodam em UMA transacao e o PRAGMA user_version so e gravado no
+  // fim dela. Se qualquer passo falhar (app encerrado, erro de IO), a transacao inteira e
+  // revertida (ROLLBACK) e o user_version NAO avanca — o proximo boot re-executa o passo do
+  // zero, sem deixar o schema "meio aplicado" (ex.: um ADD COLUMN que ja existe), o que faria
+  // o onInit lancar e impediria o app de abrir.
+  await database.execAsync('BEGIN');
+  try {
   if (currentVersion === 0) {
     await database.execAsync(`
       CREATE TABLE IF NOT EXISTS sync_queue (
@@ -407,6 +414,12 @@ export async function migrateDatabase(database: SQLiteDatabase) {
     `);
   }
 
-  await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
+    await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
+    await database.execAsync('COMMIT');
+  } catch (error) {
+    await database.execAsync('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
+
   await ensureRecordsSearchTriggers(database);
 }

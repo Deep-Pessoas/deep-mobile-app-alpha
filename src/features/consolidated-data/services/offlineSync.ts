@@ -26,7 +26,7 @@ const RECORDS_FTS_TRIGGERS_SQL = `
   END;
 `;
 
-async function suspendRecordsSearchIndex(database: SQLiteDatabase) {
+export async function suspendRecordsSearchIndex(database: SQLiteDatabase) {
   await database.execAsync(`
     DROP TRIGGER IF EXISTS offline_records_fts_insert;
     DROP TRIGGER IF EXISTS offline_records_fts_delete;
@@ -34,7 +34,7 @@ async function suspendRecordsSearchIndex(database: SQLiteDatabase) {
   `);
 }
 
-async function rebuildRecordsSearchIndex(database: SQLiteDatabase) {
+export async function rebuildRecordsSearchIndex(database: SQLiteDatabase) {
   await database.execAsync(`
     INSERT INTO offline_records_fts(offline_records_fts) VALUES ('rebuild');
     ${RECORDS_FTS_TRIGGERS_SQL}

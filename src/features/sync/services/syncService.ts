@@ -1,3 +1,4 @@
+import { File } from 'expo-file-system';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { apiClient } from '../../../shared/api/apiClient';
@@ -90,13 +91,33 @@ function asStringArray(value: FormValue | undefined): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
-type UploadFileRef = { uri: string; name: string; type: string };
+type UploadFileRef = { uri: string; name: string; type: string; size: number };
 type UploadFieldFiles = { field_id: string; files: UploadFileRef[] };
 
 /**
- * Resolve os arquivos dos campos "upload" para referencias {uri, name, type} prontas pra
- * multipart/form-data — nunca le o conteudo do arquivo nem gera base64. O arquivo e
- * streamado direto do disco pela camada nativa quando a requisicao e enviada.
+ * Tamanho do arquivo em bytes (leitura do metadado, NÃO carrega o conteúdo).
+ * Lança se o arquivo não existe ou está vazio — assim nunca tentamos enviar
+ * (e nunca declaramos no manifesto) um arquivo que o servidor não conseguiria
+ * receber íntegro. O preenchimento fica retido para reenvio.
+ */
+function requireFileSize(uri: string, fileName: string, fieldId: string): number {
+  let size: number | null = null;
+  try {
+    size = new File(uri).size;
+  } catch {
+    size = null;
+  }
+  if (size == null || size <= 0) {
+    throw new Error(`Arquivo "${fileName}" do campo ${fieldId} não foi encontrado ou está vazio.`);
+  }
+  return size;
+}
+
+/**
+ * Resolve os arquivos dos campos "upload" para referencias {uri, name, type, size} prontas
+ * pra multipart/form-data — nunca le o conteudo do arquivo nem gera base64. O arquivo e
+ * streamado direto do disco pela camada nativa quando a requisicao e enviada. O `size` vai
+ * no manifesto enviado a API, que valida byte-a-byte que cada imagem chegou completa.
  */
 function buildUploadFileRefs(uploadFields: DynamicField[], dados: FormValues, stateValues: FormValues): UploadFieldFiles[] {
   const uploads: UploadFieldFiles[] = [];
@@ -117,7 +138,8 @@ function buildUploadFileRefs(uploadFields: DynamicField[], dados: FormValues, st
       if (!uri) {
         throw new Error(`Arquivo "${fileNames[index]}" do campo ${field.id} nao foi encontrado para envio.`);
       }
-      files.push({ uri, name: fileNames[index], type: inferMimeType(fileNames[index]) });
+      const size = requireFileSize(uri, fileNames[index], field.id);
+      files.push({ uri, name: fileNames[index], type: inferMimeType(fileNames[index]), size });
     }
 
     if (files.length > 0) {
@@ -194,7 +216,12 @@ export async function getSyncableDrafts(database: SQLiteDatabase): Promise<Synca
  *
  * Em caso de falha, o rascunho permanece salvo no aparelho para nova tentativa.
  */
-export async function syncDraft(database: SQLiteDatabase, agentGuid: string, draft: SyncableDraft): Promise<SyncResult> {
+export async function syncDraft(
+  database: SQLiteDatabase,
+  agentGuid: string,
+  draft: SyncableDraft,
+  onUploadProgress?: (ratio: number) => void,
+): Promise<SyncResult> {
   const failure = (message: string): SyncResult => ({
     draftId: draft.draftId,
     formGuid: draft.formGuid,
@@ -260,7 +287,8 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
     if (situacaoFotoUris.length > 0 && situacaoCampoId) {
       const uri = situacaoFotoUris[0];
       const fileName = uri.split('/').pop() ?? 'foto.jpg';
-      uploads.push({ field_id: situacaoCampoId, files: [{ uri, name: fileName, type: inferMimeType(fileName) }] });
+      const size = requireFileSize(uri, fileName, situacaoCampoId);
+      uploads.push({ field_id: situacaoCampoId, files: [{ uri, name: fileName, type: inferMimeType(fileName), size }] });
     }
 
     // Coordenada do proprio preenchimento (capturada na conclusao). Nenhum preenchimento pode
@@ -270,6 +298,13 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
     if (!latitude || !longitude) {
       return failure('Este preenchimento não possui localização (latitude/longitude). Refaça o preenchimento com o GPS ativo.');
     }
+
+    // Manifesto: um item por arquivo anexado, com o tamanho exato em bytes. A API valida
+    // que TODOS chegaram com o byte-count correto antes de criar a visita — se faltar ou
+    // chegar incompleto, nada e salvo (rollback no servidor) e o rascunho fica para reenvio.
+    const expectedUploads = uploads.flatMap((upload) =>
+      upload.files.map((file) => ({ field_id: upload.field_id, name: file.name, size: file.size })),
+    );
 
     const payloadJson = {
       contrato_id: agentProfile.contract_guid,
@@ -283,6 +318,7 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
       registro_campo_guid: '',
       form_base_dados: await getFormBaseDados(database),
       situacao_campo_id: situacaoCampoId,
+      expected_uploads: expectedUploads,
       // created_at acompanha o envio de situacao de campo (data em que foi registrada).
       ...(situacaoCampoId ? { created_at: draftRow.updated_at } : {}),
     };
@@ -306,6 +342,14 @@ export async function syncDraft(database: SQLiteDatabase, agentGuid: string, dra
     const response = await apiClient.post<SyncApiResponse>('/campo-visitas/registro', formData, {
       timeout: SYNC_TIMEOUT_MS,
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (event) => {
+        if (!onUploadProgress) return;
+        // event.total inclui payload + arquivos; ratio chega a 1 quando o corpo
+        // inteiro (todas as imagens) terminou de subir para o servidor.
+        const total = event.total ?? 0;
+        const ratio = total > 0 ? Math.min(1, event.loaded / total) : 0;
+        onUploadProgress(ratio);
+      },
     });
 
     // Sucesso apenas quando a API retorna exatamente: { codigo: 200, status: "sucesso", ... }
@@ -338,11 +382,14 @@ export async function syncAll(
   agentGuid: string,
   drafts: SyncableDraft[],
   onProgress?: (result: SyncResult, completed: number, total: number) => void,
+  onUploadRatio?: (ratio: number) => void,
 ): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
 
   for (let index = 0; index < drafts.length; index += 1) {
-    const result = await syncDraft(database, agentGuid, drafts[index]);
+    // Reinicia o anel interno (upload de imagens) no começo de cada item.
+    onUploadRatio?.(0);
+    const result = await syncDraft(database, agentGuid, drafts[index], (ratio) => onUploadRatio?.(ratio));
     results.push(result);
     onProgress?.(result, index + 1, drafts.length);
   }

@@ -127,11 +127,17 @@ function nextDraftVersion() {
 }
 
 export function parseFields(rawJson: string): DynamicField[] {
-  const form = JSON.parse(rawJson) as { json?: string | { campos?: DynamicField[] } };
-  const schema = typeof form.json === 'string'
-    ? JSON.parse(form.json) as { campos?: DynamicField[] }
-    : form.json;
-  return Array.isArray(schema?.campos) ? schema.campos : [];
+  try {
+    const form = JSON.parse(rawJson) as { json?: string | { campos?: DynamicField[] } };
+    const schema = typeof form.json === 'string'
+      ? JSON.parse(form.json) as { campos?: DynamicField[] }
+      : form.json;
+    return Array.isArray(schema?.campos) ? schema.campos : [];
+  } catch {
+    // Schema do formulario corrompido/invalido: falha com mensagem clara em vez de propagar um
+    // SyntaxError opaco (que viraria "erro ao carregar" generico ou falha de envio sem contexto).
+    throw new Error('Formulario com formato invalido nos dados offline.');
+  }
 }
 
 function parseDraftValues(rawJson?: string): FormValues {
@@ -295,10 +301,21 @@ export async function saveSituacaoDeCampo(
   };
   const stateJson = JSON.stringify(state);
 
+  // UPSERT (em vez de INSERT cru): se a mesma situacao for salva novamente com o mesmo draftId
+  // (ex.: nova tentativa apos uma falha parcial), atualiza a linha em vez de violar a PRIMARY KEY.
   await database.runAsync(
     `INSERT INTO offline_form_drafts
        (id, record_guid, form_guid, values_json, state_json, dados_json, status, updated_at, updated_at_ms, latitude, longitude)
-     VALUES (?, ?, ?, ?, ?, ?, 'Preenchendo offline', ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, 'Preenchendo offline', ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       values_json = excluded.values_json,
+       state_json = excluded.state_json,
+       dados_json = excluded.dados_json,
+       status = excluded.status,
+       updated_at = excluded.updated_at,
+       updated_at_ms = excluded.updated_at_ms,
+       latitude = excluded.latitude,
+       longitude = excluded.longitude`,
     draftId,
     recordGuid,
     formGuid,

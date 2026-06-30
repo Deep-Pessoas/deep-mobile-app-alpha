@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { deleteDraftDirectory, persistDraftFiles, uuidv4 } from '../services/draftFileService';
+import { deleteDraftDirectory, deleteDraftFile, persistDraftFiles, uuidv4 } from '../services/draftFileService';
 import { saveSituacaoDeCampo } from '../services/fillRecordService';
 import { getCurrentCoordinates } from '../services/locationService';
 import type { FillRecordLocalStatus } from '../types/form';
@@ -74,6 +74,10 @@ export function SituacaoDeCampoFlow({ formGuid, onBack, onLocalStateSaved, recor
       setCaptureError('Não foi possível salvar a foto. Tente novamente.');
       return;
     }
+
+    // "Tirar outra": remove a foto anterior do disco (apos a nova ter sido salva com sucesso)
+    // para nao acumular arquivos orfaos na pasta do rascunho a cada nova tentativa.
+    if (photoUri && photoUri !== persisted.uri) deleteDraftFile(photoUri);
 
     setSelected(situacao);
     setPhotoUri(persisted.uri);

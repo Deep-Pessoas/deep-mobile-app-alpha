@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { rebuildRecordsSearchIndex, suspendRecordsSearchIndex } from './offlineSync';
 import type { BackofficeStatusGroup, HomeDashboardData, OverviewData, RecordsPage, SummaryData } from '../types/offline';
 
 const FILLABLE_STATUS_GUIDS = [
@@ -242,21 +243,32 @@ export async function getRecordsWithFilter(
 }
 
 export async function clearAllOfflineData(database: SQLiteDatabase, agentGuid: string) {
-  await database.runAsync('DELETE FROM offline_backoffice');
-  await database.runAsync('DELETE FROM offline_form_drafts');
-  await database.runAsync('DELETE FROM offline_records');
-  await database.runAsync('DELETE FROM offline_forms');
-  await database.runAsync('DELETE FROM offline_teams');
-  await database.runAsync('DELETE FROM offline_groups');
-  await database.runAsync('DELETE FROM offline_contracts');
-  await database.runAsync('DELETE FROM offline_situacoes_campo');
-  await database.runAsync('DELETE FROM offline_situacoes_backoffice');
-  await database.runAsync('DELETE FROM agent_profiles');
-  await database.runAsync('DELETE FROM offline_sync_state WHERE agent_guid = ?', agentGuid);
-  // Atividades de monitoramento pendentes + marcador de rastreamento horario deste agente.
-  // NAO toca em device_identity (codigo da instalacao), que deve sobreviver ao logout.
-  await database.runAsync('DELETE FROM agente_atividades WHERE agente_guid = ?', agentGuid);
-  await database.runAsync('DELETE FROM tracking_state WHERE agente_guid = ?', agentGuid);
+  // Suspende os triggers do FTS antes de apagar offline_records. Sem isto, o DELETE dispara o
+  // trigger de delete do FTS linha a linha; com o indice externo inconsistente (ex.: troca de
+  // dataset com base <-> sem base), o FTS5 levanta um erro NATIVO que o try/catch do JS NAO
+  // captura e que ENCERRA o app no logout/reset. Mesma protecao usada na ingestao (offlineSync).
+  await suspendRecordsSearchIndex(database);
+  try {
+    await database.runAsync('DELETE FROM offline_backoffice');
+    await database.runAsync('DELETE FROM offline_form_drafts');
+    await database.runAsync('DELETE FROM offline_records');
+    await database.runAsync('DELETE FROM offline_forms');
+    await database.runAsync('DELETE FROM offline_teams');
+    await database.runAsync('DELETE FROM offline_groups');
+    await database.runAsync('DELETE FROM offline_contracts');
+    await database.runAsync('DELETE FROM offline_situacoes_campo');
+    await database.runAsync('DELETE FROM offline_situacoes_backoffice');
+    await database.runAsync('DELETE FROM agent_profiles');
+    await database.runAsync('DELETE FROM offline_sync_state WHERE agent_guid = ?', agentGuid);
+    // Atividades de monitoramento pendentes + marcador de rastreamento horario deste agente.
+    // NAO toca em device_identity (codigo da instalacao), que deve sobreviver ao logout.
+    await database.runAsync('DELETE FROM agente_atividades WHERE agente_guid = ?', agentGuid);
+    await database.runAsync('DELETE FROM tracking_state WHERE agente_guid = ?', agentGuid);
+  } finally {
+    // Reconstroi o indice (agora vazio) e recria os triggers, deixando o FTS consistente.
+    await rebuildRecordsSearchIndex(database);
+    await database.execAsync('PRAGMA wal_checkpoint(PASSIVE);');
+  }
 }
 
 export async function getPendingDraftsCount(database: SQLiteDatabase): Promise<number> {

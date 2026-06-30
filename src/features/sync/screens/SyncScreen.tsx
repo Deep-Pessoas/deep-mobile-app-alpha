@@ -6,9 +6,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../../auth/context/AuthContext';
 import { useNetwork } from '../../../shared/context/NetworkContext';
-import { CheckIcon, ErrorIcon, RefreshIcon } from '../../../shared/components/Icon';
+import { RefreshIcon } from '../../../shared/components/Icon';
 import { flushActivities } from '../../activity-tracking/services/activitySync';
 import { getSyncableDrafts, syncAll } from '../services/syncService';
+import { SyncProgressRing } from '../components/SyncProgressRing';
 import type { SyncableDraft, SyncResult } from '../types/sync';
 
 type SyncPhase = 'idle' | 'syncing' | 'done';
@@ -32,14 +33,14 @@ function StatusDot({ result, isSyncing }: { result?: SyncResult; isSyncing: bool
   if (result?.success) {
     return (
       <View className="h-8 w-8 items-center justify-center rounded-full bg-green-100">
-        <CheckIcon color="#16a34a" size={16} />
+        <Text className="text-base">✅</Text>
       </View>
     );
   }
   if (result && !result.success) {
     return (
       <View className="h-8 w-8 items-center justify-center rounded-full bg-red-100">
-        <ErrorIcon color="#dc2626" size={16} />
+        <Text className="text-base">❌</Text>
       </View>
     );
   }
@@ -58,12 +59,13 @@ export function SyncScreen() {
   const [phase, setPhase] = useState<SyncPhase>('idle');
   const [resultsByKey, setResultsByKey] = useState<Record<string, SyncResult>>({});
   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [uploadRatio, setUploadRatio] = useState(0);
   const [successCount, setSuccessCount] = useState(0);
   const [failureCount, setFailureCount] = useState(0);
+  const [isFinishing, setIsFinishing] = useState(false);
 
   const headerScale = useRef(new Animated.Value(0.96)).current;
   const headerOpacity = useRef(new Animated.Value(0)).current;
-  const progressWidth = useRef(new Animated.Value(0)).current;
 
   const loadDrafts = useCallback(async () => {
     try {
@@ -106,8 +108,8 @@ export function SyncScreen() {
     setResultsByKey({});
     setSuccessCount(0);
     setFailureCount(0);
+    setUploadRatio(0);
     setProgress({ completed: 0, total: drafts.length });
-    progressWidth.setValue(0);
 
     // Primeira requisicao: monta todas as atividades num array e envia (POST
     // /agente-ativdades-mobile). Ao receber code=200, as linhas sao apagadas do banco. Depois
@@ -121,12 +123,9 @@ export function SyncScreen() {
       (result, completed, total) => {
         setResultsByKey((prev) => ({ ...prev, [result.draftId]: result }));
         setProgress({ completed, total });
-        Animated.timing(progressWidth, {
-          duration: 200,
-          toValue: completed / total,
-          useNativeDriver: false,
-        }).start();
+        setUploadRatio(1); // item concluído: anel interno cheio antes de zerar no próximo
       },
+      (ratio) => setUploadRatio(ratio),
     );
 
     const failures = results.filter((r) => !r.success);
@@ -135,11 +134,19 @@ export function SyncScreen() {
     setPhase('done');
     setProgress(null);
 
-    await loadDrafts();
+    // Não recarrega a lista aqui de propósito: os itens enviados com sucesso já foram
+    // apagados do banco, e recarregar agora os faria sumir da tela no instante em que o
+    // envio termina — antes do usuário conseguir ver a confirmação. A lista só é
+    // atualizada quando o usuário sai da tela de resultado (handleDone).
   };
 
   const handleDone = () => {
-    setPhase('idle');
+    // Feedback imediato: o botão entra em estado "Atualizando..." na hora do toque.
+    // requestFullRefresh navega para a tela de preparação (que tem seu próprio
+    // progresso), então NÃO recarregamos a lista aqui — isso evitava a sensação de
+    // "Concluir travado" (a navegação acontecia sem nenhum sinal visível no botão).
+    if (isFinishing) return;
+    setIsFinishing(true);
     setResultsByKey({});
     requestFullRefresh();
   };
@@ -188,9 +195,9 @@ export function SyncScreen() {
         ) : null}
 
         <View className="flex-row items-center justify-between px-5 py-4">
-          <View>
+          <View className="flex-1 pr-3">
             <Text className="text-xs font-semibold uppercase tracking-widest text-primary-200">
-              {isDone ? 'Concluído' : isSyncing ? 'Enviando...' : 'Aguardando envio'}
+              {isDone ? (failureCount > 0 ? 'Envio incompleto' : 'Envio confirmado') : isSyncing ? 'Enviando' : 'Pronto para enviar'}
             </Text>
             <Text className="mt-0.5 text-2xl font-bold text-white">
               {isDone
@@ -198,49 +205,41 @@ export function SyncScreen() {
                 : `${drafts.length} formulário${drafts.length === 1 ? '' : 's'}`}
             </Text>
             {isDone && failureCount > 0 ? (
-              <Text className="mt-0.5 text-xs text-red-200">{failureCount} com falha</Text>
+              <Text className="mt-0.5 text-xs font-medium text-red-100">
+                {failureCount === 1 ? '1 não enviado — salvo para reenvio' : `${failureCount} não enviados — salvos para reenvio`}
+              </Text>
             ) : isDone ? (
-              <Text className="mt-0.5 text-xs text-green-200">Todos enviados com sucesso ✓</Text>
+              <Text className="mt-0.5 text-xs font-medium text-green-200">Tudo enviado com sucesso ✅</Text>
             ) : null}
           </View>
-          <Pressable
-            className="h-10 w-10 items-center justify-center rounded-2xl bg-primary-400 active:bg-primary-300 disabled:opacity-40"
-            disabled={isSyncing}
-            onPress={loadDrafts}
-          >
-            <RefreshIcon color="#fff" size={18} />
-          </Pressable>
-        </View>
 
-        {/* Barra de progresso durante sincronização */}
-        {isSyncing && progress ? (
-          <View className="mx-5 mb-4">
-            <View className="h-1.5 overflow-hidden rounded-full bg-primary-400">
-              <Animated.View
-                className="h-full rounded-full bg-white"
-                style={{
-                  width: progressWidth.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0%', '100%'],
-                  }),
-                }}
-              />
-            </View>
-            <Text className="mt-1.5 text-right text-xs text-primary-200">
-              {progress.completed} / {progress.total}
-            </Text>
-          </View>
-        ) : null}
+          {isSyncing && progress ? (
+            <SyncProgressRing completed={progress.completed} total={progress.total} inFlightRatio={uploadRatio} />
+          ) : isDone ? (
+            // Mantém o MESMO anel no fim, cheio e mostrando o total (ex.: 2/2) — em vez de
+            // sumir e dar a sensação de que pulou o "2/2". O status (✅/❌) já está no texto
+            // à esquerda ("Envio confirmado" / "Envio incompleto").
+            <SyncProgressRing completed={successCount} total={successCount + failureCount} />
+          ) : (
+            <Pressable
+              className="h-10 w-10 items-center justify-center rounded-2xl bg-primary-400 active:bg-primary-300 disabled:opacity-40"
+              disabled={isSyncing}
+              onPress={loadDrafts}
+            >
+              <RefreshIcon color="#fff" size={18} />
+            </Pressable>
+          )}
+        </View>
       </Animated.View>
 
       {/* Lista de itens */}
       {drafts.length === 0 && !isDone ? (
         <View className="flex-1 items-center justify-center px-6">
           <View className="h-16 w-16 items-center justify-center rounded-3xl bg-zinc-100">
-            <Text className="text-3xl">✓</Text>
+            <Text className="text-3xl">✅</Text>
           </View>
           <Text className="mt-4 text-center text-base font-semibold text-zinc-700">Tudo sincronizado</Text>
-          <Text className="mt-1 text-center text-sm text-zinc-400">Não há formulários pendentes de envio.</Text>
+          <Text className="mt-1 text-center text-sm text-zinc-400">Nenhum formulário pendente de envio.</Text>
         </View>
       ) : (
         <FlatList
@@ -261,65 +260,38 @@ export function SyncScreen() {
                 }`}
                 style={{ elevation: 1 }}
               >
-                <View className="flex-row items-center px-4 py-3.5">
+                <View className="flex-row items-start px-4 py-3.5">
                   <View className="flex-1 pr-3">
-                    {/* Nome + badges */}
-                    <View className="flex-row flex-wrap items-center gap-2">
-                      <Text
-                        className={`flex-shrink text-sm font-semibold ${isError ? 'text-red-800' : 'text-zinc-900'}`}
-                        numberOfLines={1}
-                      >
-                        {item.recordName || `Registro ${item.recordGuid.slice(0, 8)}`}
-                      </Text>
-                      {item.isSituacaoDeCampo ? (
-                        <View className="rounded-full bg-violet-100 px-2 py-0.5">
-                          <Text className="text-xs font-medium text-violet-700">Situação de Campo</Text>
-                        </View>
-                      ) : null}
+                    {/* Nome do registro — linha própria, pode ser longo (até 2 linhas) */}
+                    <Text
+                      className={`text-sm font-semibold ${isError ? 'text-red-800' : 'text-zinc-900'}`}
+                      numberOfLines={2}
+                    >
+                      {item.recordName || `Registro ${item.recordGuid.slice(0, 8)}`}
+                    </Text>
+
+                    {/* Badges: tipo (base) + situação, abaixo do nome */}
+                    <View className="mt-1.5 flex-row flex-wrap items-center gap-2">
                       <View className={`rounded-full px-2 py-0.5 ${item.isBaseless ? 'bg-zinc-100' : 'bg-blue-50'}`}>
                         <Text className={`text-xs font-medium ${item.isBaseless ? 'text-zinc-500' : 'text-blue-600'}`}>
                           {item.isBaseless ? 'Sem base' : 'Com base'}
                         </Text>
                       </View>
-                      <View
-                        className={`rounded-full px-2 py-0.5 ${
-                          item.status === 'Preenchendo offline' ? 'bg-amber-50' : 'bg-zinc-50'
-                        }`}
-                      >
-                        <Text
-                          className={`text-xs font-medium ${
-                            item.status === 'Preenchendo offline' ? 'text-amber-600' : 'text-zinc-500'
-                          }`}
-                        >
-                          {item.status}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Situação título (when applicable) */}
-                    {item.isSituacaoDeCampo && item.situacaoTitulo ? (
-                      <Text className="mt-0.5 text-xs font-medium text-violet-600" numberOfLines={1}>
-                        {item.situacaoTitulo}
-                      </Text>
-                    ) : null}
-
-                    {/* Formulário */}
-                    <Text className="mt-1 text-xs text-zinc-400" numberOfLines={1}>
-                      {item.formName}
-                    </Text>
-
-                    {/* Meta info */}
-                    <View className="mt-1.5 flex-row items-center gap-3">
-                      <Text className="text-xs text-zinc-400">
-                        {item.fieldsCount} campo{item.fieldsCount === 1 ? '' : 's'}
-                      </Text>
-                      <Text className="text-xs text-zinc-300">·</Text>
+                      {item.isSituacaoDeCampo ? (
+                        <View className="rounded-full bg-violet-100 px-2 py-0.5">
+                          <Text className="text-xs font-medium text-violet-700">
+                            {item.situacaoTitulo || 'Situação de Campo'}
+                          </Text>
+                        </View>
+                      ) : null}
                       <Text className="text-xs text-zinc-400">{formatDate(item.updatedAt)}</Text>
                     </View>
 
                     {/* Mensagem de erro */}
                     {isError && result.message ? (
-                      <Text className="mt-1.5 text-xs leading-4 text-red-500">{result.message}</Text>
+                      <View className="mt-2 rounded-lg bg-red-50 px-2.5 py-2">
+                        <Text className="text-xs leading-4 text-red-600">{result.message}</Text>
+                      </View>
                     ) : null}
                   </View>
 
@@ -338,10 +310,18 @@ export function SyncScreen() {
       >
         {isDone ? (
           <Pressable
-            className="min-h-14 items-center justify-center rounded-xl bg-zinc-900 px-4 active:bg-zinc-800"
+            className="min-h-14 flex-row items-center justify-center gap-2.5 rounded-xl bg-zinc-900 px-4 active:bg-zinc-800 disabled:opacity-60"
+            disabled={isFinishing}
             onPress={handleDone}
           >
-            <Text className="text-base font-semibold text-white">Concluir</Text>
+            {isFinishing ? (
+              <>
+                <ActivityIndicator color="#fff" size="small" />
+                <Text className="text-base font-semibold text-white">Atualizando dados...</Text>
+              </>
+            ) : (
+              <Text className="text-base font-semibold text-white">Concluir</Text>
+            )}
           </Pressable>
         ) : drafts.length > 0 ? (
           <Pressable
@@ -354,9 +334,7 @@ export function SyncScreen() {
             {isSyncing ? (
               <>
                 <ActivityIndicator color="#fff" size="small" />
-                <Text className="text-base font-semibold text-white">
-                  Enviando{progress ? ` ${progress.completed} de ${progress.total}` : '...'}
-                </Text>
+                <Text className="text-base font-semibold text-white">Enviando...</Text>
               </>
             ) : !isOnline ? (
               <Text className="text-base font-semibold text-white">Sem conexão</Text>

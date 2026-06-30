@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { ActivityIndicator, Animated, Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../../auth/context/AuthContext';
 import { getHomeDashboardData } from '../../consolidated-data/services/offlineQueries';
@@ -116,6 +116,16 @@ export function HomeScreen() {
   });
 
   const load = useCallback(() => { void refetch(); }, [refetch]);
+
+  // Recarrega os contadores ao reganhar foco (nao so na montagem). Como a navegacao usa
+  // `navigate` — que mantem a tela montada — sem isto a Home mostrava numeros defasados depois
+  // de preencher/sincronizar. O react-query mantem os ultimos valores em cache, entao o refetch
+  // roda em segundo plano, sem spinner.
+  useFocusEffect(
+    useCallback(() => {
+      void refetch();
+    }, [refetch]),
+  );
 
   useEffect(() => {
     if (data) stagger.run();

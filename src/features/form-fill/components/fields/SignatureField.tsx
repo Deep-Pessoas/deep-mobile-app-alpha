@@ -72,9 +72,10 @@ function SignatureModal({
       return;
     }
 
-    // A assinatura e enviada para a API como imagem PNG em base64 (nao como o caminho
-    // SVG bruto), entao convertemos o desenho atual para uma data URL antes de
-    // confirmar.
+    // A assinatura fica embutida como PNG em base64 dentro de `dados` (nao como o caminho
+    // SVG bruto) -- vai no campo de texto "payload" do multipart, nao como arquivo de
+    // upload. Tamanho pequeno (assinatura, nao foto), entao base64-em-JSON aqui e aceitavel.
+    // A API preserva esse valor (nao aplica toUpperCase em strings data:base64,...).
     svgRef.current?.toDataURL(
       (base64) => onConfirm(`data:image/png;base64,${base64}`),
       { height: Math.round(canvasHeight), width: Math.round(canvasWidth) },

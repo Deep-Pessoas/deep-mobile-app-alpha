@@ -87,14 +87,17 @@ export function UploadField({ draftScope, error, field, onChange, value }: Props
 
     setBusyAction('persist');
     try {
-      const results = await persistDraftFiles(draftScope.draftId, field.id, uris);
+      // Persiste apenas ate o limite restante: evita copiar para o disco arquivos que seriam
+      // descartados em seguida, deixando arquivos orfaos na pasta do rascunho (vazamento).
+      const urisToPersist = uris.slice(0, remainingFiles);
+      const results = await persistDraftFiles(draftScope.draftId, field.id, urisToPersist);
       const persistedUris = results
         .filter((result): result is { ok: true; uri: string } => result.ok)
         .map((result) => result.uri);
       const failedCount = results.length - persistedUris.length;
 
       if (persistedUris.length > 0) {
-        onChange([...files, ...persistedUris.slice(0, remainingFiles)]);
+        onChange([...files, ...persistedUris]);
       }
 
       if (failedCount > 0) {

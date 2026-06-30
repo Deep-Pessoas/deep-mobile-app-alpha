@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Modal, Platform, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useFocusEffect } from '@react-navigation/native';
+
 import { useAuth } from '../../auth/context/AuthContext';
 import { clearAllOfflineData, getOverviewData, getPendingDraftsCount } from '../../consolidated-data/services/offlineQueries';
 import type { OverviewData } from '../../consolidated-data/types/offline';
@@ -87,20 +89,32 @@ export function OverviewScreen() {
     await loadPermissions();
   }, [loadPermissions]);
 
+  const dataRef = useRef<OverviewData | null>(null);
+
   const load = useCallback(async () => {
     if (!session) return;
-    setLoading(true);
-    const [d, pending] = await Promise.all([
-      getOverviewData(database, session.agent.guid),
-      getPendingDraftsCount(database),
-    ]);
-    setData(d);
-    setPendingDrafts(pending);
-    setLoading(false);
+    // Spinner de tela cheia apenas na primeira carga; em refoques (ex.: voltar apos preencher)
+    // atualiza em segundo plano sem piscar, mantendo os dados ja exibidos.
+    if (!dataRef.current) setLoading(true);
+    // try/finally: uma falha de leitura do banco nunca pode deixar a tela presa no spinner
+    // (setLoading(false) sempre roda). Relevante porque agora `load` re-executa a cada foco.
+    try {
+      const [d, pending] = await Promise.all([
+        getOverviewData(database, session.agent.guid),
+        getPendingDraftsCount(database),
+      ]);
+      dataRef.current = d;
+      setData(d);
+      setPendingDrafts(pending);
+    } finally {
+      setLoading(false);
+    }
     void loadPermissions();
   }, [database, loadPermissions, session]);
 
-  useEffect(() => { void load(); }, [load]);
+  // Recarrega ao reganhar foco (a navegacao usa `navigate`, que mantem a tela montada): sem
+  // isto, contadores e pendencias ficavam defasados depois de preencher/sincronizar.
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   useEffect(() => {
     if (!loading && data) {

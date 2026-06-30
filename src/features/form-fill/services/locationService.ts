@@ -28,7 +28,14 @@ export async function getCurrentCoordinates(): Promise<Coordinates | null> {
   try {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (!permission.granted) return null;
-    const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+    // Timeout defensivo: o GPS de alta precisao pode demorar muito (ou nunca responder) em
+    // local fechado/sinal fraco. Sem isto, a conclusao do preenchimento ficava aguardando
+    // indefinidamente. Se o fix novo nao vier a tempo, cai para a ultima posicao conhecida;
+    // se nem isso existir, retorna null e o chamador bloqueia a conclusao pedindo o GPS.
+    const position =
+      (await withTimeout(Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }), 15000)) ??
+      (await Location.getLastKnownPositionAsync());
+    if (!position) return null;
     return {
       latitude: position.coords.latitude.toFixed(6),
       longitude: position.coords.longitude.toFixed(6),
@@ -88,7 +95,7 @@ export async function getTrackingFix(): Promise<Coordinates | null> {
 }
 
 // Resolve com `null` se a promise nao concluir dentro de `ms` (para um fix de GPS travado).
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([
     promise,
     new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),

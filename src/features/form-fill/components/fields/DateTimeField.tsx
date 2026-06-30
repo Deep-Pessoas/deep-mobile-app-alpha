@@ -12,22 +12,37 @@ type Props = {
   value: FormValue;
 };
 
+function pad(value: number) {
+  return String(value).padStart(2, '0');
+}
+
 function parseValue(value: FormValue) {
   if (typeof value !== 'string' || !value) return new Date();
+  // "HH:mm" — hora local de hoje.
   if (/^\d{2}:\d{2}$/.test(value)) {
     const [hours, minutes] = value.split(':').map(Number);
     const date = new Date();
     date.setHours(hours, minutes, 0, 0);
     return date;
   }
+  // "YYYY-MM-DD" e "YYYY-MM-DDTHH:mm" (sem fuso) sao interpretados como horario LOCAL. Sem isto,
+  // `new Date("YYYY-MM-DD")` assume UTC e desloca a data em 1 dia em fusos negativos (Brasil = -3).
+  const localMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/);
+  if (localMatch) {
+    const [, y, m, d, hh, mm] = localMatch;
+    return new Date(Number(y), Number(m) - 1, Number(d), Number(hh ?? 0), Number(mm ?? 0));
+  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 
 function formatValue(date: Date, type: DynamicField['config']['dateType']) {
-  if (type === 'time') return date.toTimeString().slice(0, 5);
-  if (type === 'datetime') return date.toISOString().slice(0, 16);
-  return date.toISOString().slice(0, 10);
+  // Sempre em horario LOCAL (mesmo formato de string de antes), para que o valor salvo/enviado
+  // reflita o que o agente selecionou — sem a conversao para UTC que adiantava/atrasava o horario.
+  if (type === 'time') return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const ymd = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  if (type === 'datetime') return `${ymd}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return ymd;
 }
 
 export function DateTimeField({ error, field, onChange, value }: Props) {

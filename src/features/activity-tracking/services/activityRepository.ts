@@ -5,6 +5,9 @@ export type ActivityType =
   | 'formulario_recebido'
   | 'abertura_registro'
   | 'encerramento_registro'
+  // 'rastreiamento' (grafia mantida de proposito): este e o valor exato esperado pelo backend no
+  // campo `tipo`. Nao "corrigir" para 'rastreamento' sem alterar tambem a API — senao o evento
+  // deixa de casar no servidor.
   | 'rastreiamento';
 
 export type ActivityInput = {
@@ -70,6 +73,14 @@ export async function listActivities(database: SQLiteDatabase, agentGuid: string
 
 export async function deleteActivities(database: SQLiteDatabase, ids: number[]): Promise<void> {
   if (ids.length === 0) return;
-  const placeholders = ids.map(() => '?').join(',');
-  await database.runAsync(`DELETE FROM agente_atividades WHERE id IN (${placeholders})`, ...ids);
+  // Apaga em lotes para nao estourar o limite de variaveis vinculadas do SQLite
+  // (SQLITE_MAX_VARIABLE_NUMBER) apos longos periodos offline acumulando muitos eventos —
+  // o que antes fazia o DELETE lancar, as linhas nao serem apagadas e tudo ser reenviado em loop.
+  const CHUNK = 500;
+  for (let start = 0; start < ids.length; start += CHUNK) {
+    const slice = ids.slice(start, start + CHUNK);
+    const placeholders = slice.map(() => '?').join(',');
+    // eslint-disable-next-line no-await-in-loop
+    await database.runAsync(`DELETE FROM agente_atividades WHERE id IN (${placeholders})`, ...slice);
+  }
 }

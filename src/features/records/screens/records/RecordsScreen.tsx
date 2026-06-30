@@ -13,8 +13,10 @@ import type { RecordCard } from '../../../consolidated-data/types/offline';
 import type { FillRecordLocalStatus } from '../../../form-fill/types/form';
 import { FilterModal } from '../../components/FilterModal';
 import { RecordCardItem } from '../../components/RecordCardItem';
+import { RecordsTabs, type RecordsTabKey } from '../../components/RecordsTabs';
 import { RecordsToolbar } from '../../components/RecordsToolbar';
 import { useRecords } from '../../hooks/useRecords';
+import { AVAILABLE_STATUS_GUID, OFFLINE_FILLING_STATUS_GUID } from '../../types/records';
 
 const BASELESS_GUID = '00000000-0000-0000-0000-000000000000';
 
@@ -40,6 +42,7 @@ export function RecordsScreen() {
     isLoadingMore,
     loadMore,
     markOfflineDraft,
+    pendingSyncCount,
     records,
     resetToken,
     search,
@@ -88,6 +91,24 @@ export function RecordsScreen() {
   const selectStatus = useCallback((statusGuid: string) => {
     setSelectedStatus(statusGuid);
     setIsFilterVisible(false);
+  }, [setSelectedStatus]);
+
+  // As tabs sao um atalho de filtro por status. "Todos" cai no padrao sem filtro; qualquer
+  // filtro fino vindo do modal tambem fica representado em "Todos" (com o chip de filtro ativo).
+  const activeTab: RecordsTabKey = selectedStatus === AVAILABLE_STATUS_GUID
+    ? 'available'
+    : selectedStatus === OFFLINE_FILLING_STATUS_GUID
+      ? 'pending'
+      : 'todos';
+
+  const selectTab = useCallback((tab: RecordsTabKey) => {
+    setSelectedStatus(
+      tab === 'available'
+        ? AVAILABLE_STATUS_GUID
+        : tab === 'pending'
+          ? OFFLINE_FILLING_STATUS_GUID
+          : '',
+    );
   }, [setSelectedStatus]);
 
   const renderRecord = useCallback(({ item }: { item: RecordCard }) => (
@@ -147,6 +168,8 @@ export function RecordsScreen() {
         onOpenFilter={() => setIsFilterVisible(true)}
         search={search}
       />
+
+      <RecordsTabs activeTab={activeTab} onChange={selectTab} pendingCount={pendingSyncCount} />
 
       {error ? (
         <View className="mx-4 mt-3 rounded-xl bg-red-50 px-4 py-3">

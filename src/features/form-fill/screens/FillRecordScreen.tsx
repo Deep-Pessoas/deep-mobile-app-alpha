@@ -18,15 +18,21 @@ export function FillRecordScreen({ onBack, onLocalStateSaved, recordGuid }: Prop
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     getFillRecordData(database, recordGuid)
       .then((result) => {
+        if (!active) return;
         if (!result) {
           setError('Registro ou formulário offline não encontrado.');
           return;
         }
         setData(result);
       })
-      .catch(() => setError('Nao foi possivel carregar o formulários offline.'));
+      .catch(() => {
+        // Ignora respostas de um registro anterior se a tela ja trocou de registro/desmontou.
+        if (active) setError('Nao foi possivel carregar o formulários offline.');
+      });
+    return () => { active = false; };
   }, [database, recordGuid]);
 
   return (

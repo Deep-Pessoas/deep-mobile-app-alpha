@@ -52,13 +52,16 @@ export async function flushActivities(database: SQLiteDatabase, agentGuid: strin
       ),
     ]);
 
+    // Endpoint '/agente-ativdades-mobile' (grafia mantida de proposito): e a rota acordada com o
+    // backend. Timeout maior que o default (15s) porque a fila pode acumular muitos eventos apos
+    // um periodo longo offline e o payload unico fica grande.
     const response = await apiClient.post<ActivitiesResponse>('/agente-ativdades-mobile', {
       agente_id: agentGuid,
       equipe_id: profile?.team_guid ?? null,
       grupo_id: profile?.group_guid ?? null,
       device_id: deviceId,
       dados: rows.map(toPayloadItem),
-    });
+    }, { timeout: 60000 });
 
     if (response.data?.code === 200) {
       await deleteActivities(database, rows.map((row) => row.id));

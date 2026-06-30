@@ -2,6 +2,7 @@ import { createContext, type PropsWithChildren, useCallback, useContext, useEffe
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { setApiAccessToken, setSessionExpiredHandler } from '../../../shared/api/apiClient';
+import { getOrCreateDeviceId } from '../../../shared/device/deviceIdentity';
 import { clearAllOfflineData, isOfflineDataReady } from '../../consolidated-data/services/offlineQueries';
 import { login } from '../services/authService';
 import { clearSession, loadSession, saveSession } from '../services/sessionStorage';
@@ -128,7 +129,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setReauthError(null);
 
     try {
-      const freshLogin = await login({ cpf: currentSession.agent.cpf, senha });
+      // Envia tambem o codigo da instalacao na reautenticacao, como no login normal, para o
+      // backend manter o vinculo do dispositivo consistente em toda autenticacao.
+      const deviceId = await getOrCreateDeviceId(database);
+      const freshLogin = await login({ cpf: currentSession.agent.cpf, senha, mobile_app_device_id: deviceId });
       // Only update the token — preserve the current agent's team/group data.
       // login() returns grupo_equipe_guid: null (endpoint doesn't return it),
       // so replacing the full agent would send the user back to NoGroup.

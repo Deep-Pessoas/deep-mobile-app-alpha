@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Image,
   KeyboardAvoidingView,
@@ -115,10 +114,9 @@ export function LoginScreen() {
       try {
         pushToken = await registerForPushNotifications();
       } catch (pushError) {
+        // Best-effort: falha de push (permissao negada, emulador, Expo Go, etc.) nunca bloqueia
+        // o login e nao deve aparecer para o usuario — apenas registra no log.
         console.warn('[push] Nao foi possivel obter o token de push:', pushError);
-        // TEMPORARIO (debug): mostra na tela por que o token veio null.
-        // Remover apos confirmar que o push esta funcionando.
-        Alert.alert('Debug push token', getErrorMessage(pushError, 'Falha desconhecida ao registrar push.'));
       }
 
       // Pede a permissao de localizacao ja no login (best-effort) para que o monitoramento

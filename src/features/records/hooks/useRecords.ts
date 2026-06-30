@@ -1,7 +1,7 @@
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { getBackofficeStatuses, getFormBaseDados, getRecordsWithFilter } from '../../consolidated-data/services/offlineQueries';
+import { getBackofficeStatuses, getFormBaseDados, getPendingDraftsCount, getRecordsWithFilter } from '../../consolidated-data/services/offlineQueries';
 import type { RecordCard } from '../../consolidated-data/types/offline';
 import { AVAILABLE_STATUS_GUID, OFFLINE_DRAFT_STATUS_GUID, OFFLINE_FILLING_STATUS_GUID, type StatusFilter } from '../types/records';
 import type { FillRecordLocalStatus } from '../../form-fill/types/form';
@@ -15,7 +15,7 @@ export function useRecords(enabled = true) {
   const [records, setRecords] = useState<RecordCard[]>([]);
   const [statuses, setStatuses] = useState<StatusFilter[]>([]);
   const [search, setSearch] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState(AVAILABLE_STATUS_GUID);
   const [resetToken, setResetToken] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -25,6 +25,13 @@ export function useRecords(enabled = true) {
   const nextCursor = useRef<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formBaseDados, setFormBaseDados] = useState(true);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+
+  const refreshPendingSyncCount = useCallback(() => {
+    getPendingDraftsCount(database)
+      .then(setPendingSyncCount)
+      .catch(() => {});
+  }, [database]);
 
   const loadRecords = useCallback(async (query: string, status: string, append = false) => {
     if (append && (!hasMoreRef.current || isLoadingRef.current || isLoadingMoreRef.current)) return;
@@ -91,6 +98,13 @@ export function useRecords(enabled = true) {
       .then(setFormBaseDados)
       .catch(() => setFormBaseDados(true));
   }, [database, enabled]);
+
+  // Mantem o contador da tab "Sync" atualizado ao focar a tela e a cada reset (ex.: ao voltar
+  // do preenchimento, o foco reativa este efeito e recontabiliza os rascunhos pendentes).
+  useEffect(() => {
+    if (!enabled) return;
+    refreshPendingSyncCount();
+  }, [enabled, refreshPendingSyncCount, resetToken]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -167,7 +181,8 @@ export function useRecords(enabled = true) {
           : record
       ));
     });
-  }, [selectedStatus]);
+    refreshPendingSyncCount();
+  }, [selectedStatus, refreshPendingSyncCount]);
   const loadMore = useCallback(() => {
     loadRecords(search, selectedStatus, true);
   }, [loadRecords, search, selectedStatus]);
@@ -185,6 +200,7 @@ export function useRecords(enabled = true) {
     isLoadingMore,
     loadMore,
     markOfflineDraft,
+    pendingSyncCount,
     records,
     resetToken,
     search,
